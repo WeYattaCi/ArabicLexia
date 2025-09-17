@@ -12,21 +12,17 @@ class FontAdmin(admin.ModelAdmin):
     search_fields = ('font_name', 'designer')
 
     def save_model(self, request, obj, form, change):
-        # الخطوة الأولى: حفظ الخط أولاً ليتم إنشاء الملف على الخادم
-        super().save_model(request, obj, form, change)
+        super().save_model(request, obj, form, change) # حفظ الخط أولاً
 
         try:
-            # الخطوة الثانية: تشغيل سكربت التحليل
-            # نستخدم sys.executable لضمان استخدام نفس بيئة بايثون التي يعمل بها المشروع
+            # 1. تشغيل سكربت التحليل
             result = subprocess.run(
                 [sys.executable, 'fonts/analyzer.py', obj.font_file.path, obj.font_type],
                 capture_output=True, text=True, check=True, encoding='utf-8'
             )
-            
-            # قراءة النتائج التي أرجعها السكربت
             analysis_data = json.loads(result.stdout)
             
-            # الخطوة الثالثة: حساب الدرجة النهائية
+            # 2. حساب الدرجة النهائية
             total_score = 0
             total_weight = 0
             
@@ -53,14 +49,13 @@ class FontAdmin(admin.ModelAdmin):
             final_score_value = (total_score / total_weight) * 10 if total_weight > 0 else None
             analysis_data['final_score'] = final_score_value
 
-            # الخطوة الرابعة: حفظ كل النتائج في قاعدة البيانات
+            # 3. حفظ كل النتائج في قاعدة البيانات
             AnalysisResult.objects.update_or_create(
                 font=obj, defaults=analysis_data
             )
             self.message_user(request, "تم حفظ وتحليل الخط بنجاح.")
 
         except subprocess.CalledProcessError as e:
-            # في حال فشل سكربت التحليل، اعرض الخطأ للمستخدم
             error_output = e.stderr
             self.message_user(request, f"تم حفظ الخط، ولكن فشل التحليل: {error_output}", level='ERROR')
         except Exception as e:
@@ -75,5 +70,6 @@ class CriterionAdmin(admin.ModelAdmin):
 @admin.register(AnalysisResult)
 class AnalysisResultAdmin(admin.ModelAdmin):
     # عرض كل حقول النتائج في لوحة التحكم
-    list_display = [field.name for field in AnalysisResult._meta.fields]
+    def get_list_display(self, request):
+        return [field.name for field in self.model._meta.fields]
     search_fields = ('font__font_name',)

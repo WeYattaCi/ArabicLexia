@@ -32,8 +32,30 @@ class Criterion(models.Model):
 
 class AnalysisResult(models.Model):
     font = models.OneToOneField(Font, on_delete=models.CASCADE, primary_key=True, verbose_name="الخط")
-    final_score = models.FloatField(null=True, blank=True)
-    # سيتم إضافة باقي حقول النتائج هنا لاحقًا
-
+    
+    final_score = models.FloatField(null=True, blank=True, verbose_name="الدرجة النهائية")
+    score_for_sans_serif = models.FloatField(null=True, blank=True, verbose_name="درجة Sans Serif")
+    score_for_serif = models.FloatField(null=True, blank=True, verbose_name="درجة Serif")
+    ascender_height = models.FloatField(null=True, blank=True, verbose_name="ارتفاع الصواعد")
+    descender_depth = models.FloatField(null=True, blank=True, verbose_name="عمق الهوابط")
+    cap_height = models.FloatField(null=True, blank=True, verbose_name="ارتفاع الحرف الكبير")
+    x_height = models.FloatField(null=True, blank=True, verbose_name="ارتفاع حرف x")
+    xheight_ratio = models.FloatField(null=True, blank=True, verbose_name="نسبة ارتفاع x")
+    space_width_ratio = models.FloatField(null=True, blank=True, verbose_name="نسبة عرض الفراغ")
+    width_consistency = models.FloatField(null=True, blank=True, verbose_name="اتساق عرض الحروف")
+    balance_consistency = models.FloatField(null=True, blank=True, verbose_name="اتساق توازن الحروف")
+    sidebearing_consistency = models.FloatField(null=True, blank=True, verbose_name="اتساق الهوامش الجانبية")
+    initial_consistency = models.FloatField(null=True, blank=True, verbose_name="اتساق الأشكال الابتدائية")
+    medial_consistency = models.FloatField(null=True, blank=True, verbose_name="اتساق الأشكال الوسطية")
+    final_consistency = models.FloatField(null=True, blank=True, verbose_name="اتساق الأشكال النهائية")
+    isolated_consistency = models.FloatField(null=True, blank=True, verbose_name="اتساق الأشكال المنفردة")
+    arabic_ascender_consistency = models.FloatField(null=True, blank=True, verbose_name="اتساق الصواعد (عربي)")
+    arabic_descender_consistency = models.FloatField(null=True, blank=True, verbose_name="اتساق الهوابط (عربي)")
+    arabic_kerning_quality = models.FloatField(null=True, blank=True, verbose_name="جودة التقنين (عربي)")
+    diacritic_consistency = models.FloatField(null=True, blank=True, verbose_name="اتساق مواضع التشكيل")
+    latin_ascender_consistency = models.FloatField(null=True, blank=True, verbose_name="اتساق الصواعد (لاتيني)")
+    latin_descender_consistency = models.FloatField(null=True, blank=True, verbose_name="اتساق الهوابط (لاتيني)")
+    latin_kerning_quality = models.FloatField(null=True, blank=True, verbose_name="جودة التقنين (لاتيني)")
+    
     def __str__(self):
         return f"نتائج تحليل {self.font.font_name}"

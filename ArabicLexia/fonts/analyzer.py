@@ -28,7 +28,6 @@ class FontAnalyzer:
         }
 
     def analyze(self):
-        """Runs the full analysis suite."""
         self._gather_raw_data()
         self._calculate_basic_dimensions()
         self._calculate_consistency_metrics()
