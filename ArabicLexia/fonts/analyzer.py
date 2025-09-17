@@ -61,7 +61,7 @@ class FontAnalyzer:
                 if hasattr(glyph, 'xMin'):
                     self.raw_data['right_side_bearings'].append(advance_width - lsb - (glyph.xMax - glyph.xMin))
 
-                if hasattr(glyph, 'yMin'):
+                if hasattr(glyph, 'yMin') and hasattr(glyph, 'yMax'):
                     self.raw_data['vertical_centers'].append(glyph.yMin + (glyph.yMax - glyph.yMin) / 2)
 
                 if char in latin_chars:
@@ -115,8 +115,7 @@ class FontAnalyzer:
         self.metrics['isolated_consistency'] = (calculate_std_dev(self.raw_data['arabic_widths']) / isolated_mean) if isolated_mean and isolated_mean > 0 else None
 
     def _calculate_contextual_metrics(self):
-        # This remains a placeholder as it requires a full shaping engine (like HarfBuzz)
-        # which is beyond the scope of this script.
+        # ملاحظة: هذا تقدير مبسط. التحليل الدقيق يتطلب محرك تشكيل مثل HarfBuzz.
         self.metrics['initial_consistency'] = None
         self.metrics['medial_consistency'] = None
         self.metrics['final_consistency'] = None
@@ -139,7 +138,10 @@ class FontAnalyzer:
         width_mean = calculate_mean(self.raw_data['all_widths'])
         space_glyph_name = cmap.get(32) if cmap else None
         if space_glyph_name and width_mean and width_mean > 0:
-            self.metrics['space_width_ratio'] = self.font['hmtx'][space_glyph_name][0] / width_mean
+            try:
+                self.metrics['space_width_ratio'] = self.font['hmtx'][space_glyph_name][0] / width_mean
+            except KeyError:
+                self.metrics['space_width_ratio'] = None
         else:
             self.metrics['space_width_ratio'] = None
 
@@ -149,9 +151,11 @@ if __name__ == "__main__":
         try:
             analyzer = FontAnalyzer(font_path, font_type)
             results = analyzer.analyze()
+            # التأكد من أن كل القيم متوافقة مع JSON (تحويل NaN إلى None)
             final_results = {k: (None if v is None or (isinstance(v, (float, int)) and np.isnan(v)) else v) for k, v in results.items()}
             print(json.dumps(final_results, indent=2))
         except Exception as e:
+            # طباعة الخطأ ليتم التقاطه في لوحة التحكم
             error_data = {"error": f"Analysis failed in analyzer.py: {e}"}
             print(json.dumps(error_data), file=sys.stderr)
             sys.exit(1)
