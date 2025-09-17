@@ -1,4 +1,4 @@
-# fonts/admin.py
+# fonts/admin.py (نسخة متقدمة لكشف الأخطاء)
 from django.contrib import admin
 from .models import Font, Criterion, AnalysisResult
 from .analyzer import FontAnalyzer
@@ -8,7 +8,7 @@ import os
 import csv
 from django.http import HttpResponse
 from django.utils.html import format_html
-import traceback
+import traceback # استيراد مكتبة تتبع الأخطاء
 
 @admin.register(Font)
 class FontAdmin(admin.ModelAdmin):
@@ -57,26 +57,29 @@ class FontAdmin(admin.ModelAdmin):
             result_obj.width_histogram.save(os.path.basename(histogram_path), File(f), save=True)
         os.remove(histogram_path)
 
+    def _message_user_with_traceback(self, request, font_name):
+        """يعرض رسالة خطأ مع التتبع الكامل للخطأ."""
+        error_details = traceback.format_exc()
+        error_html = format_html("فشل تحليل الخط {} بسبب الخطأ التالي:<pre>{}</pre>", font_name, error_details)
+        self.message_user(request, error_html, level='ERROR')
+
     @admin.action(description="إعادة تحليل الخطوط المحددة")
     def reanalyze_fonts(self, request, queryset):
         for font in queryset:
             try:
                 self._perform_analysis(font)
                 self.message_user(request, f"تمت إعادة تحليل الخط: {font.font_name}")
-            except Exception as e:
-                # طباعة الخطأ الكامل في الطرفية للمساعدة في التصحيح مستقبلاً
-                traceback.print_exc()
-                self.message_user(request, f"فشل تحليل الخط {font.font_name}: {e}", level='ERROR')
+            except Exception:
+                self._message_user_with_traceback(request, font.font_name)
 
     def save_model(self, request, obj, form, change):
         super().save_model(request, obj, form, change)
         try:
             self._perform_analysis(obj)
             self.message_user(request, "تم حفظ وتحليل الخط بنجاح.")
-        except Exception as e:
-            # طباعة الخطأ الكامل في الطرفية للمساعدة في التصحيح مستقبلاً
-            traceback.print_exc()
-            self.message_user(request, f"حدث خطأ أثناء التحليل: {e}", level='ERROR')
+        except Exception:
+            self._message_user_with_traceback(request, obj.font_name)
+
 
 @admin.register(Criterion)
 class CriterionAdmin(admin.ModelAdmin):
