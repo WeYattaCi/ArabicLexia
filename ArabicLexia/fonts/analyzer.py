@@ -37,13 +37,11 @@ class FontAnalyzer:
         self._calculate_basic_dimensions()
         self._calculate_consistency_metrics()
         self._calculate_special_metrics()
-        # التأكد من أن كل القيم متوافقة مع JSON قبل إرجاعها
         return {k: (None if v is None or (isinstance(v, float) and np.isnan(v)) else v) for k, v in self.metrics.items()}
 
     def _get_glyph_prop(self, char, prop):
-        if not self.cmap or ord(char) not in self.cmap: return None
-        glyph_name = self.cmap[ord(char)]
-        if glyph_name not in self.glyph_set: return None
+        glyph_name = self.cmap.get(ord(char))
+        if not glyph_name or glyph_name not in self.glyph_set: return None
         glyph = self.glyph_set[glyph_name]
         return getattr(glyph, prop, None)
 
@@ -51,6 +49,7 @@ class FontAnalyzer:
         self.positional_map = {'init': {}, 'medi': {}, 'fina': {}}
         if 'GSUB' not in self.font: return
         gsub = self.font['GSUB'].table
+        if not hasattr(gsub.FeatureList, "FeatureRecord"): return
         features = {f.FeatureTag: f.Feature for f in gsub.FeatureList.FeatureRecord}
         for tag in self.positional_map.keys():
             if tag in features:
@@ -70,6 +69,9 @@ class FontAnalyzer:
         LATIN_DESC_CHARS = "gjpqy"
 
         for char_code, glyph_name in self.cmap.items():
+            # -- السطر التالي هو الإصلاح الرئيسي --
+            if not isinstance(glyph_name, str): continue
+            
             try:
                 advance_width, lsb = self.hmtx[glyph_name]
                 if advance_width == 0: continue
@@ -98,7 +100,7 @@ class FontAnalyzer:
                     if glyph_name in self.positional_map['init']: self.raw_data['initial_widths'].append(self.hmtx[self.positional_map['init'][glyph_name]][0])
                     if glyph_name in self.positional_map['medi']: self.raw_data['medial_widths'].append(self.hmtx[self.positional_map['medi'][glyph_name]][0])
                     if glyph_name in self.positional_map['fina']: self.raw_data['final_widths'].append(self.hmtx[self.positional_map['fina'][glyph_name]][0])
-            except Exception:
+            except (KeyError, AttributeError, TypeError):
                 continue
 
     def _calculate_basic_dimensions(self):
@@ -108,9 +110,9 @@ class FontAnalyzer:
         
         self.metrics['ascender_height'] = hhea.ascender / units_per_em if hhea else None
         self.metrics['descender_depth'] = abs(hhea.descender / units_per_em) if hhea else None
-        self.metrics['cap_height'] = os2.sCapHeight / units_per_em if os2 and os2.sCapHeight else self.metrics.get('ascender_height')
+        self.metrics['cap_height'] = os2.sCapHeight / units_per_em if os2 and hasattr(os2, 'sCapHeight') and os2.sCapHeight else self.metrics.get('ascender_height')
         
-        x_height_val = (os2.sxHeight if os2 and os2.sxHeight else self._get_glyph_prop('x', 'yMax')) or 0
+        x_height_val = (os2.sxHeight if os2 and hasattr(os2, 'sxHeight') and os2.sxHeight else self._get_glyph_prop('x', 'yMax')) or 0
         self.metrics['x_height'] = x_height_val / units_per_em if x_height_val else None
         
         cap_height_funits = (self.metrics.get('cap_height') or 0) * units_per_em
@@ -119,11 +121,11 @@ class FontAnalyzer:
     def _calculate_consistency_metrics(self):
         def consistency_score(data_list):
             mean = calculate_mean(data_list)
-            return (calculate_std_dev(data_list) / mean) if mean else None
+            return (calculate_std_dev(data_list) / mean) if mean and mean > 0 else None
 
         self.metrics['width_consistency'] = consistency_score(self.raw_data['all_widths'])
         cap_height_funits = (self.metrics.get('cap_height') or 0) * self.font['head'].unitsPerEm
-        self.metrics['balance_consistency'] = (calculate_std_dev(self.raw_data['vertical_centers']) / cap_height_funits) if cap_height_funits else None
+        self.metrics['balance_consistency'] = (calculate_std_dev(self.raw_data['vertical_centers']) / cap_height_funits) if cap_height_funits and cap_height_funits > 0 else None
         self.metrics['sidebearing_consistency'] = consistency_score(self.raw_data['left_side_bearings'] + self.raw_data['right_side_bearings'])
         
         self.metrics['latin_ascender_consistency'] = consistency_score(self.raw_data['latin_ascenders'])
@@ -137,27 +139,20 @@ class FontAnalyzer:
         self.metrics['final_consistency'] = consistency_score(self.raw_data['final_widths'])
 
     def _calculate_kerning_coverage(self, pairs):
-        # This is a simplified check. Real kerning can be in GPOS table too.
-        if 'kern' not in self.font or not self.font['kern'].tables:
-            return 0.0
-        
+        if 'kern' not in self.font or not self.font['kern'].tables: return 0.0
         kern_table = self.font['kern'].tables[0]
         if not kern_table.kernTables: return 0.0
-        
         kerning_data = kern_table.kernTables[0].kernTable
-        found_pairs = 0
         
-        # We need glyph names, not characters
         glyph_pairs = []
         for char1, char2 in pairs:
-            if ord(char1) in self.cmap and ord(char2) in self.cmap:
-                glyph_pairs.append( (self.cmap[ord(char1)], self.cmap[ord(char2)]) )
-
+            g1 = self.cmap.get(ord(char1))
+            g2 = self.cmap.get(ord(char2))
+            if g1 and g2:
+                glyph_pairs.append((g1, g2))
+        
         if not glyph_pairs: return 0.0
-
-        for g1, g2 in glyph_pairs:
-            if (g1, g2) in kerning_data:
-                found_pairs += 1
+        found_pairs = sum(1 for g1, g2 in glyph_pairs if (g1, g2) in kerning_data)
         return found_pairs / len(glyph_pairs)
 
     def _calculate_special_metrics(self):
@@ -170,13 +165,13 @@ class FontAnalyzer:
         self.metrics['arabic_kerning_quality'] = self._calculate_kerning_coverage(ARABIC_KERN_PAIRS)
         
         diacritics = [chr(c) for c in range(0x064B, 0x0652 + 1)]
-        found = sum(1 for d in diacritics if self.cmap and ord(d) in self.cmap)
+        found = sum(1 for d in diacritics if self.cmap and self.cmap.get(ord(d)))
         self.metrics['diacritic_consistency'] = found / len(diacritics) if diacritics else 0.0
         
-        # --- السطر التالي هو الذي تم إصلاحه ---
-        space_width = self.hmtx['space'][0] if 'space' in self.hmtx else None
+        space_glyph_name = self.cmap.get(32)
+        space_width = self.hmtx[space_glyph_name][0] if space_glyph_name and space_glyph_name in self.hmtx else None
         mean_width = calculate_mean(self.raw_data['all_widths'])
-        self.metrics['space_width_ratio'] = (space_width / mean_width) if space_width and mean_width else None
+        self.metrics['space_width_ratio'] = (space_width / mean_width) if space_width is not None and mean_width else None
 
     def generate_width_histogram(self, output_dir, font_id, font_name):
         if not os.path.exists(output_dir): os.makedirs(output_dir)
