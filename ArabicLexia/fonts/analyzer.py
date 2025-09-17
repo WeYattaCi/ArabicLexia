@@ -69,7 +69,6 @@ class FontAnalyzer:
         LATIN_DESC_CHARS = "gjpqy"
 
         for char_code, glyph_name in self.cmap.items():
-            # -- الإصلاح النهائي: التحقق من صلاحية اسم الحرف --
             if not isinstance(glyph_name, str) or glyph_name == ".notdef":
                 continue
             
@@ -170,7 +169,12 @@ class FontAnalyzer:
         self.metrics['diacritic_consistency'] = found / len(diacritics) if diacritics else 0.0
         
         space_glyph_name = self.cmap.get(32)
-        space_width = self.hmtx[space_glyph_name][0] if space_glyph_name and space_glyph_name in self.hmtx else None
+        # -- هذا هو الإصلاح النهائي للمشكلة --
+        if isinstance(space_glyph_name, str) and space_glyph_name in self.hmtx:
+            space_width = self.hmtx[space_glyph_name][0]
+        else:
+            space_width = None
+
         mean_width = calculate_mean(self.raw_data['all_widths'])
         self.metrics['space_width_ratio'] = (space_width / mean_width) if space_width is not None and mean_width else None
 

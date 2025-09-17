@@ -1,4 +1,4 @@
-# fonts/admin.py (نسخة متقدمة لكشف الأخطاء)
+# fonts/admin.py
 from django.contrib import admin
 from .models import Font, Criterion, AnalysisResult
 from .analyzer import FontAnalyzer
@@ -8,7 +8,7 @@ import os
 import csv
 from django.http import HttpResponse
 from django.utils.html import format_html
-import traceback # استيراد مكتبة تتبع الأخطاء
+import traceback
 
 @admin.register(Font)
 class FontAdmin(admin.ModelAdmin):
@@ -80,7 +80,6 @@ class FontAdmin(admin.ModelAdmin):
         except Exception:
             self._message_user_with_traceback(request, obj.font_name)
 
-
 @admin.register(Criterion)
 class CriterionAdmin(admin.ModelAdmin):
     list_display = ('criterion_name', 'metric_key', 'ideal_value', 'weight', 'language_scope', 'lower_is_better')
@@ -89,7 +88,6 @@ class CriterionAdmin(admin.ModelAdmin):
     
 @admin.register(AnalysisResult)
 class AnalysisResultAdmin(admin.ModelAdmin):
-    # الكود هنا يبقى كما هو
     actions = ["export_as_csv"]
     readonly_fields = ('view_histogram',)
 
