@@ -8,6 +8,7 @@ import os
 import csv
 from django.http import HttpResponse
 from django.utils.html import format_html
+import traceback
 
 @admin.register(Font)
 class FontAdmin(admin.ModelAdmin):
@@ -63,6 +64,8 @@ class FontAdmin(admin.ModelAdmin):
                 self._perform_analysis(font)
                 self.message_user(request, f"تمت إعادة تحليل الخط: {font.font_name}")
             except Exception as e:
+                # طباعة الخطأ الكامل في الطرفية للمساعدة في التصحيح مستقبلاً
+                traceback.print_exc()
                 self.message_user(request, f"فشل تحليل الخط {font.font_name}: {e}", level='ERROR')
 
     def save_model(self, request, obj, form, change):
@@ -71,6 +74,8 @@ class FontAdmin(admin.ModelAdmin):
             self._perform_analysis(obj)
             self.message_user(request, "تم حفظ وتحليل الخط بنجاح.")
         except Exception as e:
+            # طباعة الخطأ الكامل في الطرفية للمساعدة في التصحيح مستقبلاً
+            traceback.print_exc()
             self.message_user(request, f"حدث خطأ أثناء التحليل: {e}", level='ERROR')
 
 @admin.register(Criterion)
@@ -81,6 +86,7 @@ class CriterionAdmin(admin.ModelAdmin):
     
 @admin.register(AnalysisResult)
 class AnalysisResultAdmin(admin.ModelAdmin):
+    # الكود هنا يبقى كما هو
     actions = ["export_as_csv"]
     readonly_fields = ('view_histogram',)
 
@@ -94,31 +100,25 @@ class AnalysisResultAdmin(admin.ModelAdmin):
             return format_html('<a href="{}"><img src="{}" width="150" /></a>', obj.width_histogram.url, obj.width_histogram.url)
         return "لا يوجد رسم بياني"
     view_histogram.short_description = "رسم توزيع العرض"
-    
     search_fields = ('font__font_name',)
 
     def export_as_csv(self, request, queryset):
         meta = self.model._meta
         field_names = ['font'] + [field.name for field in meta.fields if field.name not in ['font', 'width_histogram']]
-        
         response = HttpResponse(content_type='text/csv; charset=utf-8')
         response.write('\ufeff'.encode('utf8'))
         response['Content-Disposition'] = f'attachment; filename=analysis_results.csv'
         writer = csv.writer(response)
         writer.writerow(field_names)
-
         arabic_fonts = queryset.filter(font__language_support='arabic_only').select_related('font')
         latin_fonts = queryset.filter(font__language_support='latin_only').select_related('font')
         bilingual_fonts = queryset.filter(font__language_support='bilingual').select_related('font')
-
         def write_rows(qs):
             for obj in qs:
                 row = [str(obj.font)] + [getattr(obj, field) for field in field_names[1:]]
                 writer.writerow(row)
-
         if arabic_fonts.exists(): writer.writerow(['--- ARABIC-ONLY FONTS ---']); write_rows(arabic_fonts)
         if latin_fonts.exists(): writer.writerow(['--- LATIN-ONLY FONTS ---']); write_rows(latin_fonts)
         if bilingual_fonts.exists(): writer.writerow(['--- BILINGUAL FONTS ---']); write_rows(bilingual_fonts)
-
         return response
     export_as_csv.short_description = "تصدير النتائج المحددة إلى ملف CSV"

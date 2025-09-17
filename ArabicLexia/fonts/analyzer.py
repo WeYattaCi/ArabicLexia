@@ -69,8 +69,9 @@ class FontAnalyzer:
         LATIN_DESC_CHARS = "gjpqy"
 
         for char_code, glyph_name in self.cmap.items():
-            # -- السطر التالي هو الإصلاح الرئيسي --
-            if not isinstance(glyph_name, str): continue
+            # -- الإصلاح النهائي: التحقق من صلاحية اسم الحرف --
+            if not isinstance(glyph_name, str) or glyph_name == ".notdef":
+                continue
             
             try:
                 advance_width, lsb = self.hmtx[glyph_name]
@@ -116,7 +117,7 @@ class FontAnalyzer:
         self.metrics['x_height'] = x_height_val / units_per_em if x_height_val else None
         
         cap_height_funits = (self.metrics.get('cap_height') or 0) * units_per_em
-        self.metrics['xheight_ratio'] = (x_height_val / cap_height_funits) if cap_height_funits and x_height_val else None
+        self.metrics['xheight_ratio'] = (x_height_val / cap_height_funits) if cap_height_funits and x_height_val > 0 else None
 
     def _calculate_consistency_metrics(self):
         def consistency_score(data_list):
