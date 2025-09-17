@@ -37,6 +37,7 @@ class FontAnalyzer:
         self._calculate_basic_dimensions()
         self._calculate_consistency_metrics()
         self._calculate_special_metrics()
+        # التأكد من أن كل القيم متوافقة مع JSON قبل إرجاعها
         return {k: (None if v is None or (isinstance(v, float) and np.isnan(v)) else v) for k, v in self.metrics.items()}
 
     def _get_glyph_prop(self, char, prop):
@@ -136,19 +137,28 @@ class FontAnalyzer:
         self.metrics['final_consistency'] = consistency_score(self.raw_data['final_widths'])
 
     def _calculate_kerning_coverage(self, pairs):
-        if 'kern' not in self.font: return 0.0
+        # This is a simplified check. Real kerning can be in GPOS table too.
+        if 'kern' not in self.font or not self.font['kern'].tables:
+            return 0.0
         
-        # Check for legacy 'kern' table
-        if self.font['kern'].tables:
-            kern_table = self.font['kern'].tables[0]
-            if kern_table.kernTables:
-                kerning_data = kern_table.kernTables[0].kernTable
-                found_pairs = sum(1 for p1, p2 in pairs if (p1, p2) in kerning_data)
-                return found_pairs / len(pairs) if pairs else 0.0
+        kern_table = self.font['kern'].tables[0]
+        if not kern_table.kernTables: return 0.0
         
-        # A more modern approach would be to check GPOS kerning, but it's more complex.
-        # For now, we'll stick to the 'kern' table for simplicity.
-        return 0.0
+        kerning_data = kern_table.kernTables[0].kernTable
+        found_pairs = 0
+        
+        # We need glyph names, not characters
+        glyph_pairs = []
+        for char1, char2 in pairs:
+            if ord(char1) in self.cmap and ord(char2) in self.cmap:
+                glyph_pairs.append( (self.cmap[ord(char1)], self.cmap[ord(char2)]) )
+
+        if not glyph_pairs: return 0.0
+
+        for g1, g2 in glyph_pairs:
+            if (g1, g2) in kerning_data:
+                found_pairs += 1
+        return found_pairs / len(glyph_pairs)
 
     def _calculate_special_metrics(self):
         self.metrics['score_for_sans_serif'] = 1.0 if self.font_type == 'sans-serif' else 0.0
@@ -163,7 +173,8 @@ class FontAnalyzer:
         found = sum(1 for d in diacritics if self.cmap and ord(d) in self.cmap)
         self.metrics['diacritic_consistency'] = found / len(diacritics) if diacritics else 0.0
         
-        space_width = self.hmtx.get('space', [None])[0]
+        # --- السطر التالي هو الذي تم إصلاحه ---
+        space_width = self.hmtx['space'][0] if 'space' in self.hmtx else None
         mean_width = calculate_mean(self.raw_data['all_widths'])
         self.metrics['space_width_ratio'] = (space_width / mean_width) if space_width and mean_width else None
 
@@ -171,7 +182,6 @@ class FontAnalyzer:
         if not os.path.exists(output_dir): os.makedirs(output_dir)
         plt.figure(figsize=(10, 6))
         plt.hist(self.raw_data['all_widths'], bins=50, color='teal', edgecolor='black')
-        # -- السطر التالي هو الذي تم تعديله --
         plt.title(f'Glyph Width Distribution for: {font_name}')
         plt.xlabel('Glyph Advance Width (FUnits)')
         plt.ylabel('Frequency')

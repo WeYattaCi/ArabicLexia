@@ -9,46 +9,6 @@ import csv
 from django.http import HttpResponse
 from django.utils.html import format_html
 
-def perform_analysis(font_obj):
-    analyzer = FontAnalyzer(font_obj.font_file.path, font_obj.font_type)
-    analysis_data = analyzer.analyze()
-    
-    total_score = 0
-    total_weight = 0
-    criteria = Criterion.objects.all()
-    if font_obj.language_support == 'arabic_only':
-        criteria = criteria.exclude(language_scope='latin')
-    elif font_obj.language_support == 'latin_only':
-        criteria = criteria.exclude(language_scope='arabic')
-
-    for criterion in criteria:
-        metric_value = analysis_data.get(criterion.metric_key)
-        if metric_value is not None and criterion.weight > 0:
-            ideal, weight = criterion.ideal_value, criterion.weight
-            
-            if criterion.lower_is_better:
-                score = max(0, 1 - (metric_value / (ideal if ideal > 0 else 1)))
-            else:
-                deviation = abs(metric_value - ideal)
-                score = max(0, 1 - (deviation / (ideal if ideal > 0 else 1)))
-            
-            total_score += score * weight
-            total_weight += weight
-    
-    analysis_data['final_score'] = (total_score / total_weight) * 10 if total_weight > 0 else None
-    
-    result_obj, _ = AnalysisResult.objects.update_or_create(font=font_obj, defaults=analysis_data)
-    
-    # -- السطر التالي هو الذي تم تعديله --
-    histogram_path = analyzer.generate_width_histogram(
-        output_dir=os.path.join(settings.MEDIA_ROOT, 'analysis_reports'),
-        font_id=font_obj.id,
-        font_name=font_obj.font_name
-    )
-    with open(histogram_path, 'rb') as f:
-        result_obj.width_histogram.save(os.path.basename(histogram_path), File(f), save=True)
-    os.remove(histogram_path)
-
 @admin.register(Font)
 class FontAdmin(admin.ModelAdmin):
     list_display = ('font_name', 'designer', 'classification', 'language_support', 'upload_date')
@@ -56,11 +16,51 @@ class FontAdmin(admin.ModelAdmin):
     search_fields = ('font_name', 'designer')
     actions = ['reanalyze_fonts']
 
+    def _perform_analysis(self, font_obj):
+        """دالة مركزية لتنفيذ عملية التحليل الكاملة."""
+        analyzer = FontAnalyzer(font_obj.font_file.path, font_obj.font_type)
+        analysis_data = analyzer.analyze()
+        
+        total_score = 0
+        total_weight = 0
+        criteria = Criterion.objects.all()
+        if font_obj.language_support == 'arabic_only':
+            criteria = criteria.exclude(language_scope='latin')
+        elif font_obj.language_support == 'latin_only':
+            criteria = criteria.exclude(language_scope='arabic')
+
+        for criterion in criteria:
+            metric_value = analysis_data.get(criterion.metric_key)
+            if metric_value is not None and criterion.weight > 0:
+                ideal, weight = criterion.ideal_value, criterion.weight
+                
+                if criterion.lower_is_better:
+                    score = max(0, 1 - (metric_value / (ideal if ideal > 0 else 1)))
+                else:
+                    deviation = abs(metric_value - ideal)
+                    score = max(0, 1 - (deviation / (ideal if ideal > 0 else 1)))
+                
+                total_score += score * weight
+                total_weight += weight
+        
+        analysis_data['final_score'] = (total_score / total_weight) * 10 if total_weight > 0 else None
+        
+        result_obj, _ = AnalysisResult.objects.update_or_create(font=font_obj, defaults=analysis_data)
+        
+        histogram_path = analyzer.generate_width_histogram(
+            output_dir=os.path.join(settings.MEDIA_ROOT, 'analysis_reports'),
+            font_id=font_obj.id,
+            font_name=font_obj.font_name
+        )
+        with open(histogram_path, 'rb') as f:
+            result_obj.width_histogram.save(os.path.basename(histogram_path), File(f), save=True)
+        os.remove(histogram_path)
+
     @admin.action(description="إعادة تحليل الخطوط المحددة")
     def reanalyze_fonts(self, request, queryset):
         for font in queryset:
             try:
-                perform_analysis(font)
+                self._perform_analysis(font)
                 self.message_user(request, f"تمت إعادة تحليل الخط: {font.font_name}")
             except Exception as e:
                 self.message_user(request, f"فشل تحليل الخط {font.font_name}: {e}", level='ERROR')
@@ -68,7 +68,7 @@ class FontAdmin(admin.ModelAdmin):
     def save_model(self, request, obj, form, change):
         super().save_model(request, obj, form, change)
         try:
-            perform_analysis(obj)
+            self._perform_analysis(obj)
             self.message_user(request, "تم حفظ وتحليل الخط بنجاح.")
         except Exception as e:
             self.message_user(request, f"حدث خطأ أثناء التحليل: {e}", level='ERROR')
@@ -105,10 +105,8 @@ class AnalysisResultAdmin(admin.ModelAdmin):
         response.write('\ufeff'.encode('utf8'))
         response['Content-Disposition'] = f'attachment; filename=analysis_results.csv'
         writer = csv.writer(response)
-
         writer.writerow(field_names)
-        
-        # ... the rest of the export function is correct ...
+
         arabic_fonts = queryset.filter(font__language_support='arabic_only').select_related('font')
         latin_fonts = queryset.filter(font__language_support='latin_only').select_related('font')
         bilingual_fonts = queryset.filter(font__language_support='bilingual').select_related('font')
@@ -118,17 +116,9 @@ class AnalysisResultAdmin(admin.ModelAdmin):
                 row = [str(obj.font)] + [getattr(obj, field) for field in field_names[1:]]
                 writer.writerow(row)
 
-        if arabic_fonts.exists():
-            writer.writerow(['--- ARABIC-ONLY FONTS ---'])
-            write_rows(arabic_fonts)
-        
-        if latin_fonts.exists():
-            writer.writerow(['--- LATIN-ONLY FONTS ---'])
-            write_rows(latin_fonts)
-
-        if bilingual_fonts.exists():
-            writer.writerow(['--- BILINGUAL FONTS ---'])
-            write_rows(bilingual_fonts)
+        if arabic_fonts.exists(): writer.writerow(['--- ARABIC-ONLY FONTS ---']); write_rows(arabic_fonts)
+        if latin_fonts.exists(): writer.writerow(['--- LATIN-ONLY FONTS ---']); write_rows(latin_fonts)
+        if bilingual_fonts.exists(): writer.writerow(['--- BILINGUAL FONTS ---']); write_rows(bilingual_fonts)
 
         return response
     export_as_csv.short_description = "تصدير النتائج المحددة إلى ملف CSV"
