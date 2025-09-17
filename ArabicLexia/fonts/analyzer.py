@@ -28,52 +28,55 @@ class FontAnalyzer:
         }
 
     def analyze(self):
+        """Runs the full analysis suite."""
         self._gather_raw_data()
         self._calculate_basic_dimensions()
         self._calculate_consistency_metrics()
         self._calculate_contextual_metrics()
         self._calculate_special_metrics()
-        return self.metrics
+        # التأكد من أن كل القيم متوافقة مع JSON قبل إرجاعها
+        return {k: (None if v is None or (isinstance(v, float) and np.isnan(v)) else v) for k, v in self.metrics.items()}
 
     def _gather_raw_data(self):
         cmap = self.font.getBestCmap()
         if not cmap: return
 
         glyph_set = self.font.getGlyphSet()
-        latin_chars = 'abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ'
-        arabic_chars = 'ابتثجحخدذرزسشصضطظعغفقكلمنهويءأآإؤئى'
         
         for char_code in cmap:
-            char = chr(char_code)
             glyph_name = cmap[char_code]
-            
             try:
-                glyph = glyph_set[glyph_name]
-                advance_width = glyph.width
-                if advance_width == 0: continue
-
+                # استخدام hmtx للحصول على العرض هو الطريقة الأكثر موثوقية
                 hor_metrics = self.font['hmtx'][glyph_name]
+                advance_width = hor_metrics[0]
                 lsb = hor_metrics[1]
+                if advance_width == 0: continue
                 
+                glyph = glyph_set[glyph_name]
+
                 self.raw_data['all_widths'].append(advance_width)
                 self.raw_data['left_side_bearings'].append(lsb)
-                if hasattr(glyph, 'xMin'):
+                if hasattr(glyph, 'xMin') and hasattr(glyph, 'xMax'):
                     self.raw_data['right_side_bearings'].append(advance_width - lsb - (glyph.xMax - glyph.xMin))
 
                 if hasattr(glyph, 'yMin') and hasattr(glyph, 'yMax'):
                     self.raw_data['vertical_centers'].append(glyph.yMin + (glyph.yMax - glyph.yMin) / 2)
 
-                if char in latin_chars:
+                # التحقق من نطاق اليونيكود هو الطريقة الأكثر دقة لتمييز اللغات
+                is_arabic = 0x0600 <= char_code <= 0x06FF
+                is_latin = (0x0041 <= char_code <= 0x005A) or (0x0061 <= char_code <= 0x007A)
+
+                if is_latin:
                     self.raw_data['latin_widths'].append(advance_width)
-                    if char in 'bdfhklt' and hasattr(glyph, 'yMax'): self.raw_data['latin_ascenders'].append(glyph.yMax)
-                    if char in 'gjpqy' and hasattr(glyph, 'yMin'): self.raw_data['latin_descenders'].append(glyph.yMin)
-                elif char in arabic_chars:
+                    if chr(char_code) in 'bdfhklt' and hasattr(glyph, 'yMax'): self.raw_data['latin_ascenders'].append(glyph.yMax)
+                    if chr(char_code) in 'gjpqy' and hasattr(glyph, 'yMin'): self.raw_data['latin_descenders'].append(glyph.yMin)
+                elif is_arabic:
                     self.raw_data['arabic_widths'].append(advance_width)
-                    if char in 'أطظكلام' and hasattr(glyph, 'yMax'): self.raw_data['arabic_ascenders'].append(glyph.yMax)
-                    if char in 'جحخروز' and hasattr(glyph, 'yMin'): self.raw_data['arabic_descenders'].append(glyph.yMin)
+                    if chr(char_code) in 'أطظكلام' and hasattr(glyph, 'yMax'): self.raw_data['arabic_ascenders'].append(glyph.yMax)
+                    if chr(char_code) in 'جحخروز' and hasattr(glyph, 'yMin'): self.raw_data['arabic_descenders'].append(glyph.yMin)
             except (KeyError, AttributeError):
                 continue
-
+    
     def _calculate_basic_dimensions(self):
         units_per_em = self.font['head'].unitsPerEm
         os2 = self.font.get('OS/2')
@@ -114,7 +117,6 @@ class FontAnalyzer:
         self.metrics['isolated_consistency'] = (calculate_std_dev(self.raw_data['arabic_widths']) / isolated_mean) if isolated_mean and isolated_mean > 0 else None
 
     def _calculate_contextual_metrics(self):
-        # ملاحظة: هذا تقدير مبسط. التحليل الدقيق يتطلب محرك تشكيل مثل HarfBuzz.
         self.metrics['initial_consistency'] = None
         self.metrics['medial_consistency'] = None
         self.metrics['final_consistency'] = None
@@ -150,11 +152,8 @@ if __name__ == "__main__":
         try:
             analyzer = FontAnalyzer(font_path, font_type)
             results = analyzer.analyze()
-            # التأكد من أن كل القيم متوافقة مع JSON (تحويل NaN إلى None)
-            final_results = {k: (None if v is None or (isinstance(v, (float, int)) and np.isnan(v)) else v) for k, v in results.items()}
-            print(json.dumps(final_results, indent=2))
+            print(json.dumps(results, indent=2))
         except Exception as e:
-            # طباعة الخطأ ليتم التقاطه في لوحة التحكم
             error_data = {"error": f"Analysis failed in analyzer.py: {e}"}
             print(json.dumps(error_data), file=sys.stderr)
             sys.exit(1)
