@@ -53,6 +53,7 @@ class FontAnalyzer:
         features = {f.FeatureTag: f.Feature for f in gsub.FeatureList.FeatureRecord}
         for tag in self.positional_map.keys():
             if tag in features:
+                if features[tag].LookupListIndex is None: continue
                 for lookup_index in features[tag].LookupListIndex:
                     lookup = gsub.LookupList.Lookup[lookup_index]
                     for subtable in lookup.SubTable:
@@ -138,41 +139,37 @@ class FontAnalyzer:
         self.metrics['medial_consistency'] = consistency_score(self.raw_data['medial_widths'])
         self.metrics['final_consistency'] = consistency_score(self.raw_data['final_widths'])
 
-    def _calculate_kerning_coverage(self, pairs):
-        if 'kern' not in self.font or not self.font['kern'].tables: return 0.0
-        kern_table = self.font['kern'].tables[0]
-        if not kern_table.kernTables: return 0.0
-        kerning_data = kern_table.kernTables[0].kernTable
+    def _has_gpos_kerning(self):
+        if 'GPOS' not in self.font: return False
+        gpos = self.font['GPOS'].table
+        if not hasattr(gpos.FeatureList, "FeatureRecord"): return False
         
-        glyph_pairs = []
-        for char1, char2 in pairs:
-            g1 = self.cmap.get(ord(char1))
-            g2 = self.cmap.get(ord(char2))
-            if g1 and g2:
-                glyph_pairs.append((g1, g2))
-        
-        if not glyph_pairs: return 0.0
-        found_pairs = sum(1 for g1, g2 in glyph_pairs if (g1, g2) in kerning_data)
-        return found_pairs / len(glyph_pairs)
+        for feature in gpos.FeatureList.FeatureRecord:
+            if feature.FeatureTag == 'kern':
+                return True
+        return False
 
     def _calculate_special_metrics(self):
         self.metrics['score_for_sans_serif'] = 1.0 if self.font_type == 'sans-serif' else 0.0
         self.metrics['score_for_serif'] = 1.0 if self.font_type == 'serif' else 0.0
         
-        LATIN_KERN_PAIRS = [('A', 'V'), ('T', 'o'), ('V', 'a'), ('Y', 'o'), ('W', 'a')]
-        ARABIC_KERN_PAIRS = [('ل', 'ا'), ('ف', 'ي'), ('و', 'ا'), ('ق', 'ا'), ('ع', 'ل')]
-        self.metrics['latin_kerning_quality'] = self._calculate_kerning_coverage(LATIN_KERN_PAIRS)
-        self.metrics['arabic_kerning_quality'] = self._calculate_kerning_coverage(ARABIC_KERN_PAIRS)
+        # -- هذا هو الجزء الذي تم ترقيته --
+        has_legacy_kern = 'kern' in self.font and self.font['kern'].tables and self.font['kern'].tables[0].kernTables
+        has_modern_kern = self._has_gpos_kerning()
+
+        # نعطي درجة كاملة إذا كان أي نوع من التقنين موجودًا
+        self.metrics['latin_kerning_quality'] = 1.0 if has_legacy_kern or has_modern_kern else 0.0
+        self.metrics['arabic_kerning_quality'] = 1.0 if has_legacy_kern or has_modern_kern else 0.0
         
         diacritics = [chr(c) for c in range(0x064B, 0x0652 + 1)]
         found = sum(1 for d in diacritics if self.cmap and self.cmap.get(ord(d)))
         self.metrics['diacritic_consistency'] = found / len(diacritics) if diacritics else 0.0
         
-        space_glyph_name = self.cmap.get(32)
-        # -- هذا هو الإصلاح النهائي للمشكلة --
-        if isinstance(space_glyph_name, str) and space_glyph_name in self.hmtx:
+        space_width = None
+        try:
+            space_glyph_name = self.cmap.get(32)
             space_width = self.hmtx[space_glyph_name][0]
-        else:
+        except (KeyError, TypeError):
             space_width = None
 
         mean_width = calculate_mean(self.raw_data['all_widths'])
