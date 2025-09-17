@@ -3,6 +3,11 @@ import sys
 import json
 import numpy as np
 from fontTools.ttLib import TTFont
+import os
+import matplotlib
+matplotlib.use('Agg') # وضع التشغيل غير التفاعلي للرسوم البيانية
+import matplotlib.pyplot as plt
+
 
 # --- الدوال الإحصائية المساعدة ---
 def calculate_mean(arr):
@@ -20,40 +25,58 @@ class FontAnalyzer:
             raise IOError(f"Could not read font file: {e}")
         self.font_type = font_type
         self.metrics = {}
+        # قاموس لتخزين بيانات الحروف العربية الموضعية
+        self.arabic_positional_widths = {'initial': [], 'medial': [], 'final': []}
         self.raw_data = {
             'latin_widths': [], 'arabic_widths': [], 'all_widths': [],
             'latin_ascenders': [], 'arabic_ascenders': [],
             'latin_descenders': [], 'arabic_descenders': [],
             'vertical_centers': [], 'left_side_bearings': [], 'right_side_bearings': []
         }
+        # استدعاء دالة تحليل GSUB الجديدة
+        self._map_positional_glyphs()
 
     def analyze(self):
         """Runs the full analysis suite."""
         self._gather_raw_data()
         self._calculate_basic_dimensions()
         self._calculate_consistency_metrics()
-        self._calculate_contextual_metrics()
+        self._calculate_contextual_metrics() # سيتم تفعيل هذه الدالة الآن
         self._calculate_special_metrics()
-        # التأكد من أن كل القيم متوافقة مع JSON قبل إرجاعها
         return {k: (None if v is None or (isinstance(v, float) and np.isnan(v)) else v) for k, v in self.metrics.items()}
+
+    def _map_positional_glyphs(self):
+        """يقرأ جدول GSUB لربط الحروف الأساسية بأشكالها الموضعية."""
+        self.positional_map = {'init': {}, 'medi': {}, 'fina': {}}
+        if 'GSUB' not in self.font:
+            return
+
+        gsub = self.font['GSUB'].table
+        features = {feature.FeatureTag: feature.Feature for feature in gsub.FeatureList.FeatureRecord}
+        
+        for tag in ['init', 'medi', 'fina']:
+            if tag in features:
+                for lookup_index in features[tag].LookupListIndex:
+                    lookup = gsub.LookupList.Lookup[lookup_index]
+                    for subtable in lookup.SubTable:
+                        if subtable.LookupType == 1: # Single Substitution
+                            for base_glyph, variant_glyph in subtable.mapping.items():
+                                self.positional_map[tag][base_glyph] = variant_glyph
 
     def _gather_raw_data(self):
         cmap = self.font.getBestCmap()
         if not cmap: return
 
         glyph_set = self.font.getGlyphSet()
+        hmtx = self.font['hmtx']
         
         for char_code in cmap:
             glyph_name = cmap[char_code]
             try:
-                # استخدام hmtx للحصول على العرض هو الطريقة الأكثر موثوقية
-                hor_metrics = self.font['hmtx'][glyph_name]
-                advance_width = hor_metrics[0]
-                lsb = hor_metrics[1]
+                advance_width, lsb = hmtx[glyph_name]
                 if advance_width == 0: continue
                 
                 glyph = glyph_set[glyph_name]
-
                 self.raw_data['all_widths'].append(advance_width)
                 self.raw_data['left_side_bearings'].append(lsb)
                 if hasattr(glyph, 'xMin') and hasattr(glyph, 'xMax'):
@@ -62,7 +85,6 @@ class FontAnalyzer:
                 if hasattr(glyph, 'yMin') and hasattr(glyph, 'yMax'):
                     self.raw_data['vertical_centers'].append(glyph.yMin + (glyph.yMax - glyph.yMin) / 2)
 
-                # التحقق من نطاق اليونيكود هو الطريقة الأكثر دقة لتمييز اللغات
                 is_arabic = 0x0600 <= char_code <= 0x06FF
                 is_latin = (0x0041 <= char_code <= 0x005A) or (0x0061 <= char_code <= 0x007A)
 
@@ -74,6 +96,15 @@ class FontAnalyzer:
                     self.raw_data['arabic_widths'].append(advance_width)
                     if chr(char_code) in 'أطظكلام' and hasattr(glyph, 'yMax'): self.raw_data['arabic_ascenders'].append(glyph.yMax)
                     if chr(char_code) in 'جحخروز' and hasattr(glyph, 'yMin'): self.raw_data['arabic_descenders'].append(glyph.yMin)
+                    
+                    # جلب عرض الأشكال الموضعية
+                    for tag, mapping in self.positional_map.items():
+                        if glyph_name in mapping:
+                            variant_glyph_name = mapping[glyph_name]
+                            variant_width, _ = hmtx[variant_glyph_name]
+                            if variant_width > 0:
+                                self.arabic_positional_widths[tag.replace('init', 'initial').replace('medi', 'medial').replace('fina', 'final')].append(variant_width)
+
             except (KeyError, AttributeError):
                 continue
     
@@ -117,16 +148,19 @@ class FontAnalyzer:
         self.metrics['isolated_consistency'] = (calculate_std_dev(self.raw_data['arabic_widths']) / isolated_mean) if isolated_mean and isolated_mean > 0 else None
 
     def _calculate_contextual_metrics(self):
-        self.metrics['initial_consistency'] = None
-        self.metrics['medial_consistency'] = None
-        self.metrics['final_consistency'] = None
+        """تحسب اتساق عرض الأشكال العربية الموضعية."""
+        for key, widths in self.arabic_positional_widths.items():
+            mean_val = calculate_mean(widths)
+            std_dev = calculate_std_dev(widths)
+            consistency = (std_dev / mean_val) if mean_val and mean_val > 0 else None
+            self.metrics[f'{key}_consistency'] = consistency
         
     def _calculate_special_metrics(self):
         self.metrics['score_for_sans_serif'] = 1.0 if self.font_type == 'sans-serif' else 0.0
         self.metrics['score_for_serif'] = 1.0 if self.font_type == 'serif' else 0.0
         
         self.metrics['latin_kerning_quality'] = 1.0 if 'kern' in self.font else 0.0
-        self.metrics['arabic_kerning_quality'] = 1.0 if 'kern' in self.font else 0.0
+        self.metrics['arabic_kerning_quality'] = 1.0 if 'GPOS' in self.font and any(f.FeatureTag == 'kern' for f in self.font['GPOS'].table.FeatureList.FeatureRecord) else 0.0
         
         diacritics = [chr(c) for c in range(0x064B, 0x0652 + 1)]
         cmap = self.font.getBestCmap()
@@ -145,6 +179,24 @@ class FontAnalyzer:
                 self.metrics['space_width_ratio'] = None
         else:
             self.metrics['space_width_ratio'] = None
+            
+    def generate_width_histogram(self, output_dir, font_id):
+        """تنشئ رسمًا بيانيًا لتوزيع عرض الحروف."""
+        if not os.path.exists(output_dir):
+            os.makedirs(output_dir)
+
+        plt.figure(figsize=(10, 6))
+        plt.hist(self.raw_data['all_widths'], bins=50, color='skyblue', edgecolor='black')
+        plt.title(f'Glyph Width Distribution for Font ID: {font_id}')
+        plt.xlabel('Glyph Advance Width (FUnits)')
+        plt.ylabel('Frequency')
+        plt.grid(True, linestyle='--', alpha=0.6)
+        
+        file_path = os.path.join(output_dir, f'width_histogram_{font_id}.png')
+        plt.savefig(file_path)
+        plt.close()
+        return file_path
+
 
 if __name__ == "__main__":
     if len(sys.argv) > 2:

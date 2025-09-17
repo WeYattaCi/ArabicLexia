@@ -1,9 +1,14 @@
 # fonts/admin.py
 from django.contrib import admin
 from .models import Font, Criterion, AnalysisResult
-import subprocess
+from .analyzer import FontAnalyzer # استيراد الفئة مباشرة
 import json
 import sys
+from django.conf import settings
+from django.core.files import File
+import os
+import csv
+from django.http import HttpResponse
 
 @admin.register(Font)
 class FontAdmin(admin.ModelAdmin):
@@ -12,21 +17,16 @@ class FontAdmin(admin.ModelAdmin):
     search_fields = ('font_name', 'designer')
 
     def save_model(self, request, obj, form, change):
-        super().save_model(request, obj, form, change) # حفظ الخط أولاً
+        super().save_model(request, obj, form, change)
 
         try:
-            # 1. تشغيل سكربت التحليل
-            result = subprocess.run(
-                [sys.executable, 'fonts/analyzer.py', obj.font_file.path, obj.font_type],
-                capture_output=True, text=True, check=True, encoding='utf-8'
-            )
-            analysis_data = json.loads(result.stdout)
+            # 1. استخدام فئة التحليل مباشرة
+            analyzer = FontAnalyzer(obj.font_file.path, obj.font_type)
+            analysis_data = analyzer.analyze()
             
-            # 2. حساب الدرجة النهائية
+            # --- (منطق حساب الدرجة النهائية) ---
             total_score = 0
             total_weight = 0
-            
-            # فلترة المعايير بناءً على دعم الخط للغة
             criteria = Criterion.objects.all()
             if obj.language_support == 'arabic_only':
                 criteria = criteria.exclude(language_scope='latin')
@@ -38,28 +38,37 @@ class FontAdmin(admin.ModelAdmin):
                 if metric_value is not None and criterion.weight > 0:
                     ideal = criterion.ideal_value
                     weight = criterion.weight
-                    
                     deviation = abs(metric_value - ideal)
-                    # المعادلة الحسابية للدرجة
                     score = max(0, 1 - (deviation / (ideal * 2 if ideal != 0 else 1)))
-                    
                     total_score += score * weight
                     total_weight += weight
             
             final_score_value = (total_score / total_weight) * 10 if total_weight > 0 else None
             analysis_data['final_score'] = final_score_value
 
+            # 2. إنشاء الرسم البياني
+            histogram_path = analyzer.generate_width_histogram(
+                output_dir=os.path.join(settings.MEDIA_ROOT, 'analysis_reports'),
+                font_id=obj.id
+            )
+
             # 3. حفظ كل النتائج في قاعدة البيانات
-            AnalysisResult.objects.update_or_create(
+            result_obj, created = AnalysisResult.objects.update_or_create(
                 font=obj, defaults=analysis_data
             )
-            self.message_user(request, "تم حفظ وتحليل الخط بنجاح.")
 
-        except subprocess.CalledProcessError as e:
-            error_output = e.stderr
-            self.message_user(request, f"تم حفظ الخط، ولكن فشل التحليل: {error_output}", level='ERROR')
+            # 4. ربط الرسم البياني بالنتيجة
+            with open(histogram_path, 'rb') as f:
+                result_obj.width_histogram.save(os.path.basename(histogram_path), File(f), save=True)
+            
+            # حذف الملف المؤقت بعد حفظه في جانغو
+            os.remove(histogram_path)
+
+            self.message_user(request, "تم حفظ وتحليل الخط وإنشاء الرسم البياني بنجاح.")
+
         except Exception as e:
-            self.message_user(request, f"حدث خطأ غير متوقع أثناء حساب الدرجة النهائية: {e}", level='ERROR')
+            self.message_user(request, f"حدث خطأ: {e}", level='ERROR')
+
 
 @admin.register(Criterion)
 class CriterionAdmin(admin.ModelAdmin):
@@ -69,7 +78,59 @@ class CriterionAdmin(admin.ModelAdmin):
 
 @admin.register(AnalysisResult)
 class AnalysisResultAdmin(admin.ModelAdmin):
-    # عرض كل حقول النتائج في لوحة التحكم
+    from django.utils.html import format_html
+    
+    # --- دالة التصدير ---
+    def export_as_csv(self, request, queryset):
+        meta = self.model._meta
+        # استبعاد حقل الصورة من التصدير وإضافة اسم الخط
+        field_names = ['font'] + [field.name for field in meta.fields if field.name not in ['font', 'width_histogram']]
+        
+        response = HttpResponse(content_type='text/csv; charset=utf-8')
+        response.write('\ufeff'.encode('utf8')) # BOM for Excel
+        response['Content-Disposition'] = f'attachment; filename=analysis_results.csv'
+        writer = csv.writer(response)
+
+        writer.writerow(field_names) # كتابة رأس الجدول
+
+        # فصل الخطوط حسب اللغة
+        arabic_fonts = queryset.filter(font__language_support='arabic_only').select_related('font')
+        latin_fonts = queryset.filter(font__language_support='latin_only').select_related('font')
+        bilingual_fonts = queryset.filter(font__language_support='bilingual').select_related('font')
+
+        def write_rows(qs):
+            for obj in qs:
+                row = [str(obj.font)] + [getattr(obj, field) for field in field_names[1:]]
+                writer.writerow(row)
+
+        if arabic_fonts.exists():
+            writer.writerow(['--- ARABIC-ONLY FONTS ---'])
+            write_rows(arabic_fonts)
+        
+        if latin_fonts.exists():
+            writer.writerow(['--- LATIN-ONLY FONTS ---'])
+            write_rows(latin_fonts)
+
+        if bilingual_fonts.exists():
+            writer.writerow(['--- BILINGUAL FONTS ---'])
+            write_rows(bilingual_fonts)
+
+        return response
+    export_as_csv.short_description = "تصدير النتائج المحددة إلى ملف CSV"
+
+    # --- بقية الفئة ---
+    actions = ["export_as_csv"] # تفعيل الإجراء
+
     def get_list_display(self, request):
-        return [field.name for field in self.model._meta.fields]
+        fields = [field.name for field in self.model._meta.fields if field.name != 'width_histogram']
+        fields.insert(1, 'view_histogram')
+        return fields
+
+    def view_histogram(self, obj):
+        if obj.width_histogram:
+            return self.format_html('<a href="{}"><img src="{}" width="150" /></a>', obj.width_histogram.url, obj.width_histogram.url)
+        return "لا يوجد رسم بياني"
+    view_histogram.short_description = "رسم توزيع العرض"
+    
     search_fields = ('font__font_name',)
+    readonly_fields = ('view_histogram',)

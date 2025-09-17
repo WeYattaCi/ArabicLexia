@@ -57,5 +57,7 @@ class AnalysisResult(models.Model):
     latin_descender_consistency = models.FloatField(null=True, blank=True, verbose_name="اتساق الهوابط (لاتيني)")
     latin_kerning_quality = models.FloatField(null=True, blank=True, verbose_name="جودة التقنين (لاتيني)")
     
+    width_histogram = models.ImageField(upload_to='analysis_reports/', null=True, blank=True, verbose_name="رسم توزيع العرض")
+    
     def __str__(self):
         return f"نتائج تحليل {self.font.font_name}"
