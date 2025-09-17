@@ -26,13 +26,13 @@ class Criterion(models.Model):
     ideal_value = models.FloatField(verbose_name="القيمة المثالية")
     weight = models.FloatField(default=1.0, verbose_name="الأهمية (الوزن)")
     language_scope = models.CharField(max_length=20, choices=LANG_SCOPE_CHOICES, default='general', verbose_name="نطاق اللغة")
+    lower_is_better = models.BooleanField(default=False, verbose_name="هل القيمة الأقل أفضل؟")
 
     def __str__(self):
         return self.criterion_name
 
 class AnalysisResult(models.Model):
     font = models.OneToOneField(Font, on_delete=models.CASCADE, primary_key=True, verbose_name="الخط")
-    
     final_score = models.FloatField(null=True, blank=True, verbose_name="الدرجة النهائية")
     score_for_sans_serif = models.FloatField(null=True, blank=True, verbose_name="درجة Sans Serif")
     score_for_serif = models.FloatField(null=True, blank=True, verbose_name="درجة Serif")
@@ -56,8 +56,6 @@ class AnalysisResult(models.Model):
     latin_ascender_consistency = models.FloatField(null=True, blank=True, verbose_name="اتساق الصواعد (لاتيني)")
     latin_descender_consistency = models.FloatField(null=True, blank=True, verbose_name="اتساق الهوابط (لاتيني)")
     latin_kerning_quality = models.FloatField(null=True, blank=True, verbose_name="جودة التقنين (لاتيني)")
-    
     width_histogram = models.ImageField(upload_to='analysis_reports/', null=True, blank=True, verbose_name="رسم توزيع العرض")
-    
     def __str__(self):
         return f"نتائج تحليل {self.font.font_name}"
