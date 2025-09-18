@@ -6,27 +6,19 @@ matplotlib.use('Agg')
 import matplotlib.pyplot as plt
 import os
 
-# --- استيراد المحللات المتخصصة ---
 from .metrics.base_dimensions import calculate_base_dimensions
 from .metrics.consistency import calculate_consistency_metrics
 from .metrics.special_metrics import calculate_special_metrics
 
-# --- دوال مساعدة عامة ---
-def calculate_mean(arr):
-    return np.mean(arr) if arr and len(arr) > 0 else None
-
-def calculate_std_dev(arr):
-    return np.std(arr) if arr and len(arr) > 1 else 0
-
 class FontAnalyzer:
-    def __init__(self, font_path, font_type):
+    def __init__(self, font_path, font_type, language_support):
         self.font = TTFont(font_path)
         self.font_type = font_type
+        self.language_support = language_support # <-- المعلومة الجديدة
         self.metrics = {}
         self.glyph_set = self.font.getGlyphSet()
         self.cmap = self.font.getBestCmap()
         self.hmtx = self.font['hmtx']
-        
         self.raw_data = {
             'all_widths': [], 'vertical_centers': [],
             'left_side_bearings': [], 'right_side_bearings': [],
@@ -50,60 +42,57 @@ class FontAnalyzer:
                         if subtable.LookupType == 1:
                             for base, variant in subtable.mapping.items():
                                 self.positional_map[tag][base] = variant
-    
-    def _gather_raw_data(self):
-        """دالة جمع بيانات شاملة ومُعاد كتابتها بالكامل للدقة."""
-        if not self.cmap: return
-        
-        # --- قوائم حروف موسعة لضمان العثور على البيانات ---
-        ARABIC_ASC_CHARS = "أإآطظكلاملف"
-        ARABIC_DESC_CHARS = "جحخعغرزوىقين"
-        LATIN_ASC_CHARS = "bdfhklt"
-        LATIN_DESC_CHARS = "gjpqy"
 
+    def _gather_data_for_language(self, is_arabic_scope, is_latin_scope):
+        if not self.cmap: return
         for char_code, glyph_name in self.cmap.items():
             if not isinstance(glyph_name, str) or glyph_name == ".notdef": continue
             try:
                 advance_width, lsb = self.hmtx[glyph_name]
                 if advance_width == 0: continue
                 
-                glyph = self.glyph_set[glyph_name]
-                pen = glyph.getPen()
-                bbox = pen.getbbox()
-
                 self.raw_data['all_widths'].append(advance_width)
                 self.raw_data['left_side_bearings'].append(lsb)
                 
-                char = chr(char_code)
-                is_arabic = 0x0600 <= char_code <= 0x06FF
-                is_latin = (0x0041 <= char_code <= 0x005A) or (0x0061 <= char_code <= 0x007A)
-
-                if is_arabic:
-                    self.raw_data['arabic_widths'].append(advance_width)
-                    if glyph_name in self.positional_map['init']: self.raw_data['initial_widths'].append(self.hmtx[self.positional_map['init'][glyph_name]][0])
-                    if glyph_name in self.positional_map['medi']: self.raw_data['medial_widths'].append(self.hmtx[self.positional_map['medi'][glyph_name]][0])
-                    if glyph_name in self.positional_map['fina']: self.raw_data['final_widths'].append(self.hmtx[self.positional_map['fina'][glyph_name]][0])
+                glyph = self.glyph_set[glyph_name]
+                pen = glyph.getPen()
+                bbox = pen.getbbox()
 
                 if bbox:
                     xMin, yMin, xMax, yMax = bbox
                     self.raw_data['right_side_bearings'].append(advance_width - lsb - (xMax - xMin))
                     self.raw_data['vertical_centers'].append(yMin + (yMax - yMin) / 2)
                     
-                    if is_arabic:
-                        if char in ARABIC_ASC_CHARS: self.raw_data['arabic_ascenders'].append(yMax)
-                        if char in ARABIC_DESC_CHARS: self.raw_data['arabic_descenders'].append(yMin)
-                    elif is_latin:
-                        if char in LATIN_ASC_CHARS: self.raw_data['latin_ascenders'].append(yMax)
-                        if char in LATIN_DESC_CHARS: self.raw_data['latin_descenders'].append(yMin)
-            except (KeyError, AttributeError, TypeError):
+                    if is_arabic_scope and (0x0600 <= char_code <= 0x06FF):
+                        if yMax > 300: self.raw_data['arabic_ascenders'].append(yMax)
+                        if yMin < 0: self.raw_data['arabic_descenders'].append(yMin)
+                    
+                    elif is_latin_scope and (0x0041 <= char_code <= 0x007A):
+                        if yMax > 500: self.raw_data['latin_ascenders'].append(yMax)
+                        if yMin < 0: self.raw_data['latin_descenders'].append(yMin)
+
+                if is_arabic_scope and (0x0600 <= char_code <= 0x06FF):
+                    self.raw_data['arabic_widths'].append(advance_width)
+                    if glyph_name in self.positional_map['init']: self.raw_data['initial_widths'].append(self.hmtx[self.positional_map['init'][glyph_name]][0])
+                    if glyph_name in self.positional_map['medi']: self.raw_data['medial_widths'].append(self.hmtx[self.positional_map['medi'][glyph_name]][0])
+                    if glyph_name in self.positional_map['fina']: self.raw_data['final_widths'].append(self.hmtx[self.positional_map['fina'][glyph_name]][0])
+            except Exception:
                 continue
-    
+
     def analyze(self):
-        self._gather_raw_data()
+        # --- المحلل المتخصص ---
+        if self.language_support == 'arabic_only':
+            self._gather_data_for_language(is_arabic_scope=True, is_latin_scope=False)
+        elif self.language_support == 'latin_only':
+            self._gather_data_for_language(is_arabic_scope=False, is_latin_scope=True)
+        else: # bilingual
+            self._gather_data_for_language(is_arabic_scope=True, is_latin_scope=True)
+        
         self.metrics.update(calculate_base_dimensions(self))
         self.metrics.update(calculate_consistency_metrics(self))
         self.metrics.update(calculate_special_metrics(self))
-        return {k: (v if not (isinstance(v, float) and np.isnan(v)) else None) for k, v in self.metrics.items()}
+        
+        return {k: v for k, v in self.metrics.items() if v is not None}
 
     def generate_width_histogram(self, output_dir, font_id, font_name):
         if not self.raw_data['all_widths']: return None
