@@ -1,50 +1,58 @@
 # fonts/metrics/base_dimensions.py
 
-def _get_glyph_prop(cmap, glyph_set, char, prop):
-    """دالة مساعدة آمنة لجلب خاصية من حرف معين."""
+def _get_glyph_bbox_prop(cmap, glyph_set, char, prop_index, is_abs=False):
+    """
+    دالة مساعدة آمنة لجلب إحداثيات (yMin, yMax) من حرف معين.
+    prop_index: 3 for yMax, 1 for yMin
+    """
+    if not cmap: return None
     glyph_name = cmap.get(ord(char))
     if not glyph_name or glyph_name not in glyph_set:
         return None
-    glyph = glyph_set[glyph_name]
-    return getattr(glyph, prop, None)
+    
+    try:
+        pen = glyph_set[glyph_name].getPen()
+        bbox = pen.getbbox()
+        # bbox is (xMin, yMin, xMax, yMax)
+        if not bbox: return None
+        value = bbox[prop_index]
+        return abs(value) if is_abs else value
+    except (AttributeError, TypeError):
+        return None
 
 def calculate_base_dimensions(analyzer):
     """
-    تحسب الأبعاد الأساسية للخط بوحدات الخط الأولية (FUnits).
+    تحسب الأبعاد الأساسية للخط باستخدام خوارزمية هجينة وذكية.
     """
-    font = analyzer.font
     results = {}
-    
+    font = analyzer.font
     os2 = font.get('OS/2')
     hhea = font.get('hhea')
-    
-    # --- تم إزالة القسمة على units_per_em من جميع الحسابات ---
 
-    results['ascender_height'] = hhea.ascender if hhea and hasattr(hhea, 'ascender') else None
-    results['descender_depth'] = abs(hhea.descender) if hhea and hasattr(hhea, 'descender') else None
-    
-    # حساب ارتفاع الحرف الكبير (Cap Height)
-    cap_height_units = None
-    if os2 and hasattr(os2, 'sCapHeight') and os2.sCapHeight:
-        cap_height_units = os2.sCapHeight
-    else: 
-        cap_height_units = _get_glyph_prop(analyzer.cmap, analyzer.glyph_set, 'H', 'yMax')
-    
-    results['cap_height'] = cap_height_units
+    # --- الطريقة الأولى (الأكثر دقة): القياس المباشر للحروف ---
+    cap_height_from_glyph = _get_glyph_bbox_prop(analyzer.cmap, analyzer.glyph_set, 'H', 3)
+    x_height_from_glyph = _get_glyph_bbox_prop(analyzer.cmap, analyzer.glyph_set, 'x', 3)
+    ascender_from_glyph = _get_glyph_bbox_prop(analyzer.cmap, analyzer.glyph_set, 'd', 3)
+    descender_from_glyph = _get_glyph_bbox_prop(analyzer.cmap, analyzer.glyph_set, 'p', 1, is_abs=True)
 
-    # حساب ارتفاع حرف x (x-height)
-    x_height_units = None
-    if os2 and hasattr(os2, 'sxHeight') and os2.sxHeight:
-        x_height_units = os2.sxHeight
-    else:
-        x_height_units = _get_glyph_prop(analyzer.cmap, analyzer.glyph_set, 'x', 'yMax')
-
-    results['x_height'] = x_height_units
+    # --- الطريقة الثانية (الخطة البديلة): قراءة البيانات الوصفية العامة ---
+    ascender_from_meta = hhea.ascender if hhea and hasattr(hhea, 'ascender') else None
+    descender_from_meta = abs(hhea.descender) if hhea and hasattr(hhea, 'descender') else None
+    cap_height_from_meta = os2.sCapHeight if os2 and hasattr(os2, 'sCapHeight') and os2.sCapHeight else None
+    x_height_from_meta = os2.sxHeight if os2 and hasattr(os2, 'sxHeight') and os2.sxHeight else None
     
-    # حساب نسبة ارتفاع x
-    # (هذا المعيار الوحيد الذي يبقى نسبة مئوية)
-    if x_height_units is not None and cap_height_units and cap_height_units > 0:
-        results['xheight_ratio'] = x_height_units / cap_height_units
+    # --- القرار: استخدم القياس المباشر إن وجد، وإلا استخدم الخطة البديلة ---
+    results['ascender_height'] = ascender_from_glyph or ascender_from_meta
+    results['descender_depth'] = descender_from_glyph or descender_from_meta
+    results['cap_height'] = cap_height_from_glyph or cap_height_from_meta or ascender_from_meta # CapHeight قد يساوي Ascender كخطة بديلة أخيرة
+    results['x_height'] = x_height_from_glyph or x_height_from_meta
+    
+    # حساب نسبة ارتفاع x بناءً على القيم النهائية
+    final_x_height = results.get('x_height')
+    final_cap_height = results.get('cap_height')
+    
+    if final_x_height is not None and final_cap_height and final_cap_height > 0:
+        results['xheight_ratio'] = final_x_height / final_cap_height
     else:
         results['xheight_ratio'] = None
 
