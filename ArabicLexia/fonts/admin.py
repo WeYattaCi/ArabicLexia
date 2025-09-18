@@ -53,9 +53,13 @@ class FontAdmin(admin.ModelAdmin):
             font_id=font_obj.id,
             font_name=font_obj.font_name
         )
-        with open(histogram_path, 'rb') as f:
-            result_obj.width_histogram.save(os.path.basename(histogram_path), File(f), save=True)
-        os.remove(histogram_path)
+        
+        # --- هذا هو الإصلاح الرئيسي ---
+        # تحقق من أن الرسم البياني تم إنشاؤه قبل محاولة حفظه
+        if histogram_path and os.path.exists(histogram_path):
+            with open(histogram_path, 'rb') as f:
+                result_obj.width_histogram.save(os.path.basename(histogram_path), File(f), save=True)
+            os.remove(histogram_path)
 
     def _message_user_with_traceback(self, request, font_name):
         """يعرض رسالة خطأ مع التتبع الكامل للخطأ."""

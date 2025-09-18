@@ -27,7 +27,6 @@ class FontAnalyzer:
         self.cmap = self.font.getBestCmap()
         self.hmtx = self.font['hmtx']
         
-        # قاموس مُعاد هيكلته لجمع كل البيانات الأولية المطلوبة
         self.raw_data = {
             'all_widths': [], 'vertical_centers': [],
             'left_side_bearings': [], 'right_side_bearings': [],
@@ -55,8 +54,12 @@ class FontAnalyzer:
     def _gather_raw_data(self):
         """دالة جمع بيانات شاملة ومُعاد كتابتها بالكامل للدقة."""
         if not self.cmap: return
-        ARABIC_ASC_CHARS, ARABIC_DESC_CHARS = "أإآطظكلام", "جحخعغرزوى"
-        LATIN_ASC_CHARS, LATIN_DESC_CHARS = "bdfhkl", "gjpqy"
+        
+        # --- قوائم حروف موسعة لضمان العثور على البيانات ---
+        ARABIC_ASC_CHARS = "أإآطظكلاملف"
+        ARABIC_DESC_CHARS = "جحخعغرزوىقين"
+        LATIN_ASC_CHARS = "bdfhklt"
+        LATIN_DESC_CHARS = "gjpqy"
 
         for char_code, glyph_name in self.cmap.items():
             if not isinstance(glyph_name, str) or glyph_name == ".notdef": continue
@@ -66,31 +69,32 @@ class FontAnalyzer:
                 
                 glyph = self.glyph_set[glyph_name]
                 pen = glyph.getPen()
-                bbox = pen.getbbox() # (xMin, yMin, xMax, yMax)
+                bbox = pen.getbbox()
 
-                # جمع البيانات لكل المعايير
                 self.raw_data['all_widths'].append(advance_width)
                 self.raw_data['left_side_bearings'].append(lsb)
                 
+                char = chr(char_code)
+                is_arabic = 0x0600 <= char_code <= 0x06FF
+                is_latin = (0x0041 <= char_code <= 0x005A) or (0x0061 <= char_code <= 0x007A)
+
+                if is_arabic:
+                    self.raw_data['arabic_widths'].append(advance_width)
+                    if glyph_name in self.positional_map['init']: self.raw_data['initial_widths'].append(self.hmtx[self.positional_map['init'][glyph_name]][0])
+                    if glyph_name in self.positional_map['medi']: self.raw_data['medial_widths'].append(self.hmtx[self.positional_map['medi'][glyph_name]][0])
+                    if glyph_name in self.positional_map['fina']: self.raw_data['final_widths'].append(self.hmtx[self.positional_map['fina'][glyph_name]][0])
+
                 if bbox:
                     xMin, yMin, xMax, yMax = bbox
                     self.raw_data['right_side_bearings'].append(advance_width - lsb - (xMax - xMin))
                     self.raw_data['vertical_centers'].append(yMin + (yMax - yMin) / 2)
                     
-                    char = chr(char_code)
-                    if 0x0600 <= char_code <= 0x06FF: # Arabic
-                        self.raw_data['arabic_widths'].append(advance_width)
+                    if is_arabic:
                         if char in ARABIC_ASC_CHARS: self.raw_data['arabic_ascenders'].append(yMax)
                         if char in ARABIC_DESC_CHARS: self.raw_data['arabic_descenders'].append(yMin)
-                        
-                        if glyph_name in self.positional_map['init']: self.raw_data['initial_widths'].append(self.hmtx[self.positional_map['init'][glyph_name]][0])
-                        if glyph_name in self.positional_map['medi']: self.raw_data['medial_widths'].append(self.hmtx[self.positional_map['medi'][glyph_name]][0])
-                        if glyph_name in self.positional_map['fina']: self.raw_data['final_widths'].append(self.hmtx[self.positional_map['fina'][glyph_name]][0])
-
-                    elif (0x0041 <= char_code <= 0x005A) or (0x0061 <= char_code <= 0x007A): # Latin
+                    elif is_latin:
                         if char in LATIN_ASC_CHARS: self.raw_data['latin_ascenders'].append(yMax)
                         if char in LATIN_DESC_CHARS: self.raw_data['latin_descenders'].append(yMin)
-
             except (KeyError, AttributeError, TypeError):
                 continue
     
@@ -102,7 +106,7 @@ class FontAnalyzer:
         return {k: (v if not (isinstance(v, float) and np.isnan(v)) else None) for k, v in self.metrics.items()}
 
     def generate_width_histogram(self, output_dir, font_id, font_name):
-        if not self.raw_data['all_widths']: return
+        if not self.raw_data['all_widths']: return None
         if not os.path.exists(output_dir): os.makedirs(output_dir)
         plt.figure(figsize=(10, 6))
         plt.hist(self.raw_data['all_widths'], bins=50, color='teal', edgecolor='black')
