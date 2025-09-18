@@ -1,5 +1,5 @@
 # fonts/metrics/special_metrics.py
-from ..analyzer import calculate_mean
+from .utils import calculate_mean
 
 def _calculate_kerning_coverage(font, pairs):
     """دالة مساعدة لحساب تغطية التقنين."""
@@ -10,14 +10,14 @@ def _calculate_kerning_coverage(font, pairs):
     if 'GPOS' in font and hasattr(font['GPOS'].table.FeatureList, "FeatureRecord"):
         for feature in font['GPOS'].table.FeatureList.FeatureRecord:
             if feature.FeatureTag == 'kern':
-                # وجود الميزة يعتبر مؤشرًا جيدًا مبدئيًا
                 return 1.0 
     
+    # -- هذا هو الجزء الذي تم إصلاحه --
     # التحقق من جدول التقنين القديم (kern)
-    if 'kern' in font and font['kern'].tables:
-        kern_table = font['kern'].tables[0]
-        if kern_table.kernTables:
-            kerning_data = kern_table.kernTables[0].kernTable
+    if 'kern' in font and hasattr(font['kern'], 'kernTables') and font['kern'].kernTables:
+        kern_table = font['kern'].kernTables[0]
+        if hasattr(kern_table, 'kernTable'):
+            kerning_data = kern_table.kernTable
             glyph_pairs = []
             for char1, char2 in pairs:
                 g1 = cmap.get(ord(char1))
