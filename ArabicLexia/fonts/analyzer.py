@@ -11,6 +11,13 @@ from .metrics.base_dimensions import calculate_base_dimensions
 from .metrics.consistency import calculate_consistency_metrics
 from .metrics.special_metrics import calculate_special_metrics
 
+# --- دوال مساعدة عامة ---
+def calculate_mean(arr):
+    return np.mean(arr) if arr and len(arr) > 0 else None
+
+def calculate_std_dev(arr):
+    return np.std(arr) if arr and len(arr) > 1 else 0
+
 class FontAnalyzer:
     def __init__(self, font_path, font_type):
         self.font = TTFont(font_path)
@@ -19,12 +26,13 @@ class FontAnalyzer:
         self.glyph_set = self.font.getGlyphSet()
         self.cmap = self.font.getBestCmap()
         self.hmtx = self.font['hmtx']
-
+        
+        # قاموس مُعاد هيكلته لجمع كل البيانات الأولية المطلوبة
         self.raw_data = {
-            'latin_widths': [], 'arabic_widths': [], 'all_widths': [],
-            'latin_ascenders': [], 'arabic_ascenders': [],
-            'latin_descenders': [], 'arabic_descenders': [],
-            'vertical_centers': [], 'left_side_bearings': [], 'right_side_bearings': [],
+            'all_widths': [], 'vertical_centers': [],
+            'left_side_bearings': [], 'right_side_bearings': [],
+            'latin_ascenders': [], 'latin_descenders': [],
+            'arabic_widths': [], 'arabic_ascenders': [], 'arabic_descenders': [],
             'initial_widths': [], 'medial_widths': [], 'final_widths': []
         }
         self._map_positional_glyphs()
@@ -43,8 +51,9 @@ class FontAnalyzer:
                         if subtable.LookupType == 1:
                             for base, variant in subtable.mapping.items():
                                 self.positional_map[tag][base] = variant
-
+    
     def _gather_raw_data(self):
+        """دالة جمع بيانات شاملة ومُعاد كتابتها بالكامل للدقة."""
         if not self.cmap: return
         ARABIC_ASC_CHARS, ARABIC_DESC_CHARS = "أإآطظكلام", "جحخعغرزوى"
         LATIN_ASC_CHARS, LATIN_DESC_CHARS = "bdfhkl", "gjpqy"
@@ -54,34 +63,42 @@ class FontAnalyzer:
             try:
                 advance_width, lsb = self.hmtx[glyph_name]
                 if advance_width == 0: continue
+                
                 glyph = self.glyph_set[glyph_name]
+                pen = glyph.getPen()
+                bbox = pen.getbbox() # (xMin, yMin, xMax, yMax)
 
+                # جمع البيانات لكل المعايير
                 self.raw_data['all_widths'].append(advance_width)
-                if hasattr(glyph, 'yMin') and hasattr(glyph, 'yMax'):
-                    self.raw_data['vertical_centers'].append(glyph.yMin + (glyph.yMax - glyph.yMin) / 2)
+                self.raw_data['left_side_bearings'].append(lsb)
+                
+                if bbox:
+                    xMin, yMin, xMax, yMax = bbox
+                    self.raw_data['right_side_bearings'].append(advance_width - lsb - (xMax - xMin))
+                    self.raw_data['vertical_centers'].append(yMin + (yMax - yMin) / 2)
+                    
+                    char = chr(char_code)
+                    if 0x0600 <= char_code <= 0x06FF: # Arabic
+                        self.raw_data['arabic_widths'].append(advance_width)
+                        if char in ARABIC_ASC_CHARS: self.raw_data['arabic_ascenders'].append(yMax)
+                        if char in ARABIC_DESC_CHARS: self.raw_data['arabic_descenders'].append(yMin)
+                        
+                        if glyph_name in self.positional_map['init']: self.raw_data['initial_widths'].append(self.hmtx[self.positional_map['init'][glyph_name]][0])
+                        if glyph_name in self.positional_map['medi']: self.raw_data['medial_widths'].append(self.hmtx[self.positional_map['medi'][glyph_name]][0])
+                        if glyph_name in self.positional_map['fina']: self.raw_data['final_widths'].append(self.hmtx[self.positional_map['fina'][glyph_name]][0])
 
-                char = chr(char_code)
-                if 0x0600 <= char_code <= 0x06FF:
-                    self.raw_data['arabic_widths'].append(advance_width)
-                    if char in ARABIC_ASC_CHARS: self.raw_data['arabic_ascenders'].append(glyph.yMax)
-                    if char in ARABIC_DESC_CHARS: self.raw_data['arabic_descenders'].append(glyph.yMin)
-                    if glyph_name in self.positional_map['init']: self.raw_data['initial_widths'].append(self.hmtx[self.positional_map['init'][glyph_name]][0])
-                    if glyph_name in self.positional_map['medi']: self.raw_data['medial_widths'].append(self.hmtx[self.positional_map['medi'][glyph_name]][0])
-                    if glyph_name in self.positional_map['fina']: self.raw_data['final_widths'].append(self.hmtx[self.positional_map['fina'][glyph_name]][0])
-                elif (0x0041 <= char_code <= 0x005A) or (0x0061 <= char_code <= 0x007A):
-                    if char in LATIN_ASC_CHARS: self.raw_data['latin_ascenders'].append(glyph.yMax)
-                    if char in LATIN_DESC_CHARS: self.raw_data['latin_descenders'].append(glyph.yMin)
+                    elif (0x0041 <= char_code <= 0x005A) or (0x0061 <= char_code <= 0x007A): # Latin
+                        if char in LATIN_ASC_CHARS: self.raw_data['latin_ascenders'].append(yMax)
+                        if char in LATIN_DESC_CHARS: self.raw_data['latin_descenders'].append(yMin)
+
             except (KeyError, AttributeError, TypeError):
                 continue
-
+    
     def analyze(self):
         self._gather_raw_data()
-
-        # --- استدعاء المحللات وجمع النتائج ---
         self.metrics.update(calculate_base_dimensions(self))
         self.metrics.update(calculate_consistency_metrics(self))
         self.metrics.update(calculate_special_metrics(self))
-
         return {k: (v if not (isinstance(v, float) and np.isnan(v)) else None) for k, v in self.metrics.items()}
 
     def generate_width_histogram(self, output_dir, font_id, font_name):
