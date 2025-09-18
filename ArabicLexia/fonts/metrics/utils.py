@@ -8,9 +8,6 @@ def calculate_std_dev(arr):
     return np.std(arr) if arr and len(arr) > 1 else 0
 
 def get_glyph_bbox(glyph_set, glyph_name):
-    """
-    الطريقة الأكثر أمانًا للحصول على الصندوق المحيط للحرف.
-    """
     try:
         glyph = glyph_set[glyph_name]
         glyph.recalcBounds(glyph_set)

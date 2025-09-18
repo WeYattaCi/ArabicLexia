@@ -7,8 +7,7 @@ from django.core.files import File
 import os
 import csv
 from django.http import HttpResponse
-from django.utils.html import format_html # <-- تم تصحيح هذا السطر
-import json
+from django.utils.html import format_html
 import traceback
 
 @admin.register(Font)
@@ -19,14 +18,10 @@ class FontAdmin(admin.ModelAdmin):
     actions = ['reanalyze_fonts']
 
     def _perform_analysis(self, request, font_obj):
-        """دالة مركزية لتنفيذ عملية التحليل الكاملة."""
-        # لاحظ أننا أزلنا font_type و language_support من هنا لأنهما غير مستخدمان في النسخة المبسطة
-        analyzer = FontAnalyzer(font_obj.font_file.path)
-        analysis_data, debug_log = analyzer.analyze()
+        # --- هذا هو السطر الذي تم إصلاحه ليتوافق مع المحلل ---
+        analyzer = FontAnalyzer(font_obj.font_file.path, font_obj.font_type, font_obj.language_support)
+        analysis_data = analyzer.analyze()
         
-        debug_message = format_html("<strong>--- سجل التدقيق ---</strong><pre>{}</pre>", json.dumps(debug_log, indent=2, ensure_ascii=False))
-        self.message_user(request, debug_message, level='INFO')
-
         # حساب الدرجة النهائية
         total_score = 0
         total_weight = 0
@@ -38,7 +33,7 @@ class FontAdmin(admin.ModelAdmin):
 
         for criterion in criteria:
             metric_value = analysis_data.get(criterion.metric_key)
-            if metric_value is not None and criterion.weight > 0:
+            if metric_value is not None and metric_value is not False and criterion.weight > 0:
                 ideal, weight = criterion.ideal_value, criterion.weight
                 if criterion.lower_is_better:
                     score = max(0, 1 - (metric_value / (ideal if ideal > 0 else 1)))
@@ -50,11 +45,21 @@ class FontAdmin(admin.ModelAdmin):
         
         analysis_data['final_score'] = (total_score / total_weight) * 10 if total_weight > 0 else None
         
-        AnalysisResult.objects.update_or_create(font=font_obj, defaults=analysis_data)
+        result_obj, _ = AnalysisResult.objects.update_or_create(font=font_obj, defaults=analysis_data)
         
-    def _message_user_with_traceback(self, request, font_name):
+        histogram_path = analyzer.generate_width_histogram(
+            output_dir=os.path.join(settings.MEDIA_ROOT, 'analysis_reports'),
+            font_id=font_obj.id,
+            font_name=font_obj.font_name
+        )
+        if histogram_path and os.path.exists(histogram_path):
+            with open(histogram_path, 'rb') as f:
+                result_obj.width_histogram.save(os.path.basename(histogram_path), File(f), save=True)
+            os.remove(histogram_path)
+
+    def _message_user_with_traceback(self, request, font_name, e):
         error_details = traceback.format_exc()
-        error_html = format_html("فشل تحليل الخط {} بسبب الخطأ التالي:<pre>{}</pre>", font_name, error_details)
+        error_html = format_html("فشل تحليل الخط {} بسبب الخطأ التالي:<br><strong>{}</strong><pre>{}</pre>", font_name, str(e), error_details)
         self.message_user(request, error_html, level='ERROR')
 
     @admin.action(description="إعادة تحليل الخطوط المحددة")
@@ -62,15 +67,17 @@ class FontAdmin(admin.ModelAdmin):
         for font in queryset:
             try:
                 self._perform_analysis(request, font)
-            except Exception:
-                self._message_user_with_traceback(request, font.font_name)
+                self.message_user(request, f"تمت إعادة تحليل الخط: {font.font_name}")
+            except Exception as e:
+                self._message_user_with_traceback(request, font.font_name, e)
 
     def save_model(self, request, obj, form, change):
         super().save_model(request, obj, form, change)
         try:
             self._perform_analysis(request, obj)
-        except Exception:
-            self._message_user_with_traceback(request, obj.font_name)
+            self.message_user(request, "تم حفظ وتحليل الخط بنجاح.")
+        except Exception as e:
+            self._message_user_with_traceback(request, obj.font_name, e)
 
 
 @admin.register(Criterion)
@@ -79,11 +86,9 @@ class CriterionAdmin(admin.ModelAdmin):
 
 @admin.register(AnalysisResult)
 class AnalysisResultAdmin(admin.ModelAdmin):
-    # تم إرجاع الرسم البياني بعد حذف النسخة المبسطة السابقة
     readonly_fields = ('view_histogram',)
     
     def get_list_display(self, request):
-        # التأكد من أن حقل الصورة موجود قبل محاولة عرضه
         fields = [field.name for field in self.model._meta.get_fields() if field.name != 'font']
         if 'width_histogram' in fields:
             fields.remove('width_histogram')
