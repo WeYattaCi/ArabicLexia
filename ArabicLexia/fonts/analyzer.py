@@ -11,14 +11,6 @@ from .metrics.base_dimensions import calculate_base_dimensions
 from .metrics.consistency import calculate_consistency_metrics
 from .metrics.special_metrics import calculate_special_metrics
 
-# --- دوال مساعدة عامة ---
-def calculate_mean(arr):
-    return np.mean(arr) if arr and len(arr) > 0 else None
-
-def calculate_std_dev(arr):
-    return np.std(arr) if arr and len(arr) > 1 else 0
-
-
 class FontAnalyzer:
     def __init__(self, font_path, font_type):
         self.font = TTFont(font_path)
@@ -27,7 +19,7 @@ class FontAnalyzer:
         self.glyph_set = self.font.getGlyphSet()
         self.cmap = self.font.getBestCmap()
         self.hmtx = self.font['hmtx']
-        
+
         self.raw_data = {
             'latin_widths': [], 'arabic_widths': [], 'all_widths': [],
             'latin_ascenders': [], 'arabic_ascenders': [],
@@ -51,7 +43,7 @@ class FontAnalyzer:
                         if subtable.LookupType == 1:
                             for base, variant in subtable.mapping.items():
                                 self.positional_map[tag][base] = variant
-    
+
     def _gather_raw_data(self):
         if not self.cmap: return
         ARABIC_ASC_CHARS, ARABIC_DESC_CHARS = "أإآطظكلام", "جحخعغرزوى"
@@ -63,7 +55,7 @@ class FontAnalyzer:
                 advance_width, lsb = self.hmtx[glyph_name]
                 if advance_width == 0: continue
                 glyph = self.glyph_set[glyph_name]
-                
+
                 self.raw_data['all_widths'].append(advance_width)
                 if hasattr(glyph, 'yMin') and hasattr(glyph, 'yMax'):
                     self.raw_data['vertical_centers'].append(glyph.yMin + (glyph.yMax - glyph.yMin) / 2)
@@ -81,10 +73,10 @@ class FontAnalyzer:
                     if char in LATIN_DESC_CHARS: self.raw_data['latin_descenders'].append(glyph.yMin)
             except (KeyError, AttributeError, TypeError):
                 continue
-    
+
     def analyze(self):
         self._gather_raw_data()
-        
+
         # --- استدعاء المحللات وجمع النتائج ---
         self.metrics.update(calculate_base_dimensions(self))
         self.metrics.update(calculate_consistency_metrics(self))
