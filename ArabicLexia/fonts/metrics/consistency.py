@@ -16,19 +16,13 @@ def calculate_consistency_metrics(analyzer):
         results['width_consistency'] = calculate_std_dev(raw_data['widths']) / mean_width
         all_bearings = raw_data['lsbs'] + raw_data['rsbs']
         results['sidebearing_consistency'] = calculate_std_dev(all_bearings) / mean_width
-
-    cap_height = analyzer.metrics.get('cap_height')
-    if cap_height and cap_height > 0:
-        results['balance_consistency'] = calculate_std_dev(raw_data['v_centers']) / cap_height
+    
+    # تم نقل معايير الاتساق العمودي إلى ملفها الخاص
+    # results['balance_consistency'] is now in vertical_consistency.py
     
     results['isolated_consistency'] = consistency(raw_data['arabic_widths'])
     results['initial_consistency'] = consistency(raw_data['initial_widths'])
     results['medial_consistency'] = consistency(raw_data['medial_widths'])
     results['final_consistency'] = consistency(raw_data['final_widths'])
-    
-    results['arabic_ascender_consistency'] = consistency(raw_data['arabic_ascenders'])
-    results['arabic_descender_consistency'] = consistency(raw_data['arabic_descenders'])
-    results['latin_ascender_consistency'] = consistency(raw_data['latin_ascenders'])
-    results['latin_descender_consistency'] = consistency(raw_data['latin_descenders'])
     
     return results
