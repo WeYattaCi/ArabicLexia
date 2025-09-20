@@ -3,5 +3,6 @@ gunicorn
 fonttools
 pillow
 numpy
-matplotlib
 uharfbuzz
+matplotlib
+font-v
