@@ -4,7 +4,7 @@ from .utils import calculate_mean, calculate_std_dev
 ARABIC_CHAR_SET = [chr(c) for c in range(0x0621, 0x064A + 1)]
 def calculate_positional_consistency(analyzer):
     results = {}
-    widths = {'initial': [], 'medial': [], 'final': [], 'isolated': [], 'arabic_widths': []}
+    widths = {'initial': [], 'medial': [], 'final': [], 'isolated': []}
     try:
         font_data = analyzer.font.reader.file.read(); analyzer.font.reader.file.seek(0)
         face = hb.Face(font_data); font = hb.Font(face); font.scale = (face.upem, face.upem); hb.ot_font_set_funcs(font)
@@ -20,11 +20,9 @@ def calculate_positional_consistency(analyzer):
             if len(medi_buf.glyph_positions) > 2: widths['medial'].append(medi_buf.glyph_positions[1].x_advance)
     except Exception: return {}
     def consistency(arr):
-        mean_val = calculate_mean(arr)
-        return calculate_std_dev(arr) / abs(mean_val) if mean_val != 0 else None
+        mean_val = calculate_mean(arr); return calculate_std_dev(arr) / abs(mean_val) if mean_val != 0 else None
     results['isolated_consistency'] = consistency(widths['isolated'])
     results['initial_consistency'] = consistency(widths['initial'])
     results['medial_consistency'] = consistency(widths['medial'])
     results['final_consistency'] = consistency(widths['final'])
-    analyzer.raw_data['arabic_widths'] = widths['isolated'] # Pass isolated widths to main analyzer
     return results

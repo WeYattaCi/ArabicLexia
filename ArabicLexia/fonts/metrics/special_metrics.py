@@ -1,5 +1,4 @@
 # fonts/metrics/special_metrics.py
-# (This file is stable, ensure you have this version)
 from .utils import calculate_mean
 def count_kerning_pairs(font):
     total_pairs = 0
@@ -11,8 +10,7 @@ def count_kerning_pairs(font):
     return total_pairs
 def calculate_special_metrics(analyzer):
     results = {}
-    kerning_pairs_count = count_kerning_pairs(analyzer.font)
-    results['kerning_quality'] = kerning_pairs_count
+    results['kerning_quality'] = count_kerning_pairs(analyzer.font)
     diacritics = [chr(c) for c in range(0x064B, 0x0652 + 1)]
     found = sum(1 for d in diacritics if analyzer.cmap and analyzer.cmap.get(ord(d)))
     results['diacritic_consistency'] = found / len(diacritics) if diacritics else 0.0
