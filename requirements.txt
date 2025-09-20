@@ -5,4 +5,4 @@ pillow
 numpy
 uharfbuzz
 matplotlib
-font-v
+gftools[qa]
