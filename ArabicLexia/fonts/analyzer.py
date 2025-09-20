@@ -1,9 +1,9 @@
-# fonts/analyzer.py (النسخة النهائية المبسطة والمصححة)
+# fonts/analyzer.py (النسخة النهائية المصححة)
 from fontTools.ttLib import TTFont
 import numpy as np
 import matplotlib
 matplotlib.use('Agg')
-import matplotlib.pyplot as plt
+import matplotlib.pyplot as as plt
 import os
 
 class FontAnalyzer:
@@ -18,12 +18,25 @@ class FontAnalyzer:
             'latin_ascenders': [], 'latin_descenders': [],
             'initial_widths': [], 'medial_widths': [], 'final_widths': []
         }
+        # --- هذا هو الإصلاح: تعريف المتغيرات الأساسية هنا ---
+        self.glyph_set = self.font.getGlyphSet()
+        self.cmap = self.font.getBestCmap()
+        self.hmtx = self.font['hmtx']
         self._map_positional_glyphs()
 
     def _map_positional_glyphs(self):
         self.positional_map = {'init': {}, 'medi': {}, 'fina': {}}
-        # ... (الكود هنا لم يتغير) ...
-        pass
+        if 'GSUB' not in self.font or not hasattr(self.font['GSUB'].table, 'FeatureList') or not self.font['GSUB'].table.FeatureList:
+            return
+        features = {f.FeatureTag: f.Feature for f in self.font['GSUB'].table.FeatureList.FeatureRecord}
+        for tag in self.positional_map.keys():
+            if tag in features and features[tag].LookupListIndex is not None:
+                for lookup_index in features[tag].LookupListIndex:
+                    lookup = self.font['GSUB'].table.LookupList.Lookup[lookup_index]
+                    for subtable in lookup.SubTable:
+                        if subtable.LookupType == 1:
+                            for base, variant in subtable.mapping.items():
+                                self.positional_map[tag][base] = variant
 
     def _calculate_metrics(self):
         hhea = self.font.get('hhea')
@@ -63,32 +76,42 @@ class FontAnalyzer:
         self.metrics['latin_ascender_consistency'] = consistency(self.raw_data['latin_ascenders'])
         self.metrics['latin_descender_consistency'] = consistency(self.raw_data['latin_descenders'])
 
+        # Special Metrics
+        kerning_pairs = 0
+        if 'GPOS' in self.font and hasattr(self.font['GPOS'].table, 'LookupList') and self.font['GPOS'].table.LookupList:
+            for lookup in self.font['GPOS'].table.LookupList.Lookup:
+                if lookup.LookupType == 2:
+                    for subtable in lookup.SubTable:
+                        if hasattr(subtable, 'PairSet'):
+                            kerning_pairs += sum(len(ps.PairValueRecord) for ps in subtable.PairSet)
+        self.metrics['arabic_kerning_quality'] = kerning_pairs
+        self.metrics['latin_kerning_quality'] = kerning_pairs
+
+        diacritics = [chr(c) for c in range(0x064B, 0x0652 + 1)]
+        found = sum(1 for d in diacritics if self.cmap and self.cmap.get(ord(d)))
+        self.metrics['diacritic_consistency'] = found / len(diacritics) if diacritics else 0.0
+
     def analyze(self):
-        cmap = self.font.getBestCmap()
-        if not cmap: return {}
-        
-        glyph_set = self.font.getGlyphSet()
-        hmtx = self.font['hmtx']
+        if not self.cmap: return {}
         
         LATIN_ASC_CHARS = "bdfhijklt"
         LATIN_DESC_CHARS = "gjpqy"
         ARABIC_ASC_CHARS = "أإآادذرزطظكلف"
         ARABIC_DESC_CHARS = "جحخعغرزوىقينم"
         
-        for char_code, glyph_name in cmap.items():
+        for char_code, glyph_name in self.cmap.items():
             if not isinstance(glyph_name, str) or glyph_name == ".notdef": continue
             try:
-                advance_width, lsb = hmtx[glyph_name]
+                advance_width, lsb = self.hmtx[glyph_name]
                 if advance_width == 0: continue
                 
                 self.raw_data['widths'].append(advance_width)
                 self.raw_data['lsbs'].append(lsb)
                 
-                # --- الطريقة الصحيحة والنهائية لحساب الأبعاد ---
-                glyph = glyph_set[glyph_name]
+                glyph = self.glyph_set[glyph_name]
                 pen = glyph.getPen()
-                glyph.draw(pen) # الخطوة الأولى: ارسم الحرف على اللوحة
-                bbox = pen.getbbox() # الخطوة الثانية: خذ أبعاد الرسم
+                glyph.draw(pen)
+                bbox = pen.getbbox()
                 
                 if bbox:
                     xMin, yMin, xMax, yMax = bbox
@@ -99,17 +122,18 @@ class FontAnalyzer:
                     is_arabic = 0x0600 <= char_code <= 0x06FF
                     is_latin = 0x0041 <= char_code <= 0x007A
 
-                    if is_arabic and self.language_support != 'latin_only':
+                    if is_arabic:
                         if char in ARABIC_ASC_CHARS: self.raw_data['arabic_ascenders'].append(yMax)
                         if char in ARABIC_DESC_CHARS: self.raw_data['arabic_descenders'].append(yMin)
-                    elif is_latin and self.language_support != 'arabic_only':
+                    elif is_latin:
                         if char in LATIN_ASC_CHARS: self.raw_data['latin_ascenders'].append(yMax)
                         if char in LATIN_DESC_CHARS: self.raw_data['latin_descenders'].append(yMin)
 
                 if 0x0600 <= char_code <= 0x06FF:
-                    if glyph_name in self.positional_map['init']: self.raw_data['initial_widths'].append(hmtx[self.positional_map['init'][glyph_name]][0])
-                    if glyph_name in self.positional_map['medi']: self.raw_data['medial_widths'].append(hmtx[self.positional_map['medi'][glyph_name]][0])
-                    if glyph_name in self.positional_map['fina']: self.raw_data['final_widths'].append(hmtx[self.positional_map['fina'][glyph_name]][0])
+                    self.raw_data['arabic_widths'].append(advance_width)
+                    if glyph_name in self.positional_map['init']: self.raw_data['initial_widths'].append(self.hmtx[self.positional_map['init'][glyph_name]][0])
+                    if glyph_name in self.positional_map['medi']: self.raw_data['medial_widths'].append(self.hmtx[self.positional_map['medi'][glyph_name]][0])
+                    if glyph_name in self.positional_map['fina']: self.raw_data['final_widths'].append(self.hmtx[self.positional_map['fina'][glyph_name]][0])
             except Exception:
                 continue
                 

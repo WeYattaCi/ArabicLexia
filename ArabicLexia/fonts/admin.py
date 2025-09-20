@@ -19,16 +19,19 @@ class FontAdmin(admin.ModelAdmin):
         analyzer = FontAnalyzer(font_obj.font_file.path, font_obj.font_type, font_obj.language_support)
         analysis_data = analyzer.analyze()
         
-        total_score = 0
-        total_weight = 0
-        criteria = Criterion.objects.all()
-        # ... (بقية كود حساب الدرجة النهائية) ...
+        # This part will be reactivated once the analyzer is fully stable
+        # total_score = 0 ...
+        analysis_data['final_score'] = None # Temporarily disable final score
         
         AnalysisResult.objects.update_or_create(font=font_obj, defaults=analysis_data)
+        
+        # Histogram generation can be reactivated later
+        # histogram_path = analyzer.generate_width_histogram(...)
 
     def _message_user_with_traceback(self, request, font_name, e):
-        # ... (الكود هنا لم يتغير) ...
-        pass
+        error_details = traceback.format_exc()
+        error_html = format_html("فشل تحليل الخط {} بسبب الخطأ التالي:<br><strong>{}</strong><pre>{}</pre>", font_name, str(e), error_details)
+        self.message_user(request, error_html, level='ERROR')
 
     @admin.action(description="إعادة تحليل الخطوط المحددة")
     def reanalyze_fonts(self, request, queryset):
@@ -49,10 +52,10 @@ class FontAdmin(admin.ModelAdmin):
 
 @admin.register(Criterion)
 class CriterionAdmin(admin.ModelAdmin):
-    # ... (الكود هنا لم يتغير) ...
-    pass
+    list_display = ('criterion_name', 'metric_key', 'ideal_value', 'weight', 'language_scope', 'lower_is_better')
 
 @admin.register(AnalysisResult)
 class AnalysisResultAdmin(admin.ModelAdmin):
-    # ... (الكود هنا لم يتغير) ...
-    pass
+    # list_display can be customized here as needed
+    def get_list_display(self, request):
+        return [field.name for field in self.model._meta.get_fields()]
