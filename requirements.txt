@@ -4,3 +4,4 @@ fonttools
 pillow
 numpy
 matplotlib
+uharfbuzz
